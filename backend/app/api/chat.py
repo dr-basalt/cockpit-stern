@@ -7,11 +7,16 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from langchain_core.messages import HumanMessage
 
+from langchain_core.messages import AIMessage as LCAIMessage
+
 from app.core.database import get_db, async_session
 from app.agents.graph import build_graph
 from app.services.inversion import InversionRulesEngine
 from app.services.memory import MemoryService
 from app.services.profile_store import ProfileStore
+
+# In-memory session history (per session_id)
+_session_history: dict[str, list[dict]] = {}
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -56,9 +61,20 @@ async def chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
     # Get memory context
     context = await memory_service.get_context(request.profile_id, request.message)
 
+    # Build conversation history
+    session_key = f"{request.session_id}:{request.profile_id}"
+    history = _session_history.get(session_key, [])
+    messages = []
+    for h in history[-10:]:  # last 10 exchanges max
+        if h["role"] == "user":
+            messages.append(HumanMessage(content=h["content"]))
+        else:
+            messages.append(LCAIMessage(content=h["content"]))
+    messages.append(HumanMessage(content=request.message))
+
     # Build state
     state = {
-        "messages": [HumanMessage(content=request.message)],
+        "messages": messages,
         "profile": {
             "hd_type": profile.hd_type,
             "hd_authority": profile.hd_authority,
@@ -92,16 +108,23 @@ async def chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
     # Run graph
     result = await graph.ainvoke(state)
 
-    # Store interaction
+    last_message = result["messages"][-1].content if result["messages"] else ""
+
+    # Store in session history (for conversation continuity)
+    if session_key not in _session_history:
+        _session_history[session_key] = []
+    _session_history[session_key].append({"role": "user", "content": request.message})
+    _session_history[session_key].append({"role": "assistant", "content": last_message})
+    # Keep max 20 messages per session
+    _session_history[session_key] = _session_history[session_key][-20:]
+
+    # Store in memory service
     await memory_service.store_interaction(request.profile_id, {
         "role": "user",
         "content": request.message,
         "agent": result.get("active_agent", "sp"),
         "session_id": request.session_id,
     })
-
-    last_message = result["messages"][-1].content if result["messages"] else ""
-
     await memory_service.store_interaction(request.profile_id, {
         "role": "assistant",
         "content": last_message,

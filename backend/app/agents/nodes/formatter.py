@@ -7,11 +7,11 @@ from app.agents.state import AgentState
 logger = logging.getLogger(__name__)
 
 HD_FOOTERS = {
-    "Generator": "\n\n---\n_Ton sacral répond à quoi ? Oui ou Non._",
-    "Manifesting Generator": "\n\n---\n_Tu peux avancer sur plusieurs en parallèle. Qu'est-ce qui t'attire ?_",
-    "Projector": "\n\n---\n_Si tu étais invité à choisir, laquelle te reconnaît le plus ?_",
-    "Manifestor": "",  # Pas de question — le Manifestor initie seul
-    "Reflector": "\n\n---\n_Laisse cette idée reposer. Dans quelques jours, est-ce que ça résonne encore ?_",
+    "Generator": "",  # Le Clone gère déjà le format oui/non dans son output
+    "Manifesting Generator": "",
+    "Projector": "",
+    "Manifestor": "",
+    "Reflector": "",
 }
 
 
