@@ -1,0 +1,154 @@
+services:
+  traefik:
+    image: traefik:v3.4
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedByDefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.le.acme.dnschallenge=true"
+      - "--certificatesresolvers.le.acme.dnschallenge.provider=cloudflare"
+      - "--certificatesresolvers.le.acme.email=contact@ori3com.cloud"
+      - "--certificatesresolvers.le.acme.storage=/letsencrypt/acme.json"
+      - "--certificatesresolvers.le.acme.dnschallenge.resolvers=1.1.1.1:53"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+    environment:
+      CF_DNS_API_TOKEN: ${CF_DNS_API_TOKEN}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-certs:/letsencrypt
+    restart: unless-stopped
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: cockpit
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cockpitstern2026}
+      POSTGRES_DB: cockpit
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cockpit"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+asyncpg://cockpit:${POSTGRES_PASSWORD:-cockpitstern2026}@postgres:5432/cockpit
+      REDIS_URL: redis://redis:6379/0
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_HOST: ${LANGFUSE_HOST:-https://cloud.langfuse.com}
+      MEM0_API_KEY: ${MEM0_API_KEY:-}
+      OBOT_URL: http://obot:8080
+      NANGO_URL: http://nango:3003
+      NANGO_SECRET_KEY: ${NANGO_SECRET_KEY:-}
+      SECRET_KEY: ${SECRET_KEY}
+      ENVIRONMENT: production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.stern-api.rule=Host(`api-stern-os2.ori3com.cloud`)"
+      - "traefik.http.routers.stern-api.tls.certresolver=le"
+      - "traefik.http.routers.stern-api.entrypoints=websecure"
+      - "traefik.http.services.stern-api.loadbalancer.server.port=8000"
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    environment:
+      NEXT_PUBLIC_API_URL: https://api-stern-os2.ori3com.cloud
+    depends_on:
+      - backend
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.stern-front.rule=Host(`stern-os2.ori3com.cloud`)"
+      - "traefik.http.routers.stern-front.tls.certresolver=le"
+      - "traefik.http.routers.stern-front.entrypoints=websecure"
+      - "traefik.http.services.stern-front.loadbalancer.server.port=3000"
+    restart: unless-stopped
+
+  nango:
+    image: nangohq/nango:latest
+    environment:
+      SERVER_URL: http://nango:3003
+      NANGO_SECRET_KEY: ${NANGO_SECRET_KEY:-changeme}
+      POSTGRES_URL: postgresql://cockpit:${POSTGRES_PASSWORD:-cockpitstern2026}@postgres:5432/nango
+    depends_on:
+      postgres:
+        condition: service_healthy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.stern-nango.rule=Host(`nango-stern-os2.ori3com.cloud`)"
+      - "traefik.http.routers.stern-nango.tls.certresolver=le"
+      - "traefik.http.routers.stern-nango.entrypoints=websecure"
+      - "traefik.http.services.stern-nango.loadbalancer.server.port=3003"
+    restart: unless-stopped
+
+  obot:
+    image: ghcr.io/obot-platform/obot:latest
+    environment:
+      OBOT_SERVER_URL: http://obot:8080
+      OBOT_POSTGRES_DSN: postgresql://cockpit:${POSTGRES_PASSWORD:-cockpitstern2026}@postgres:5432/obot
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nango:
+        condition: service_started
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.stern-obot.rule=Host(`obot-stern-os2.ori3com.cloud`)"
+      - "traefik.http.routers.stern-obot.tls.certresolver=le"
+      - "traefik.http.routers.stern-obot.entrypoints=websecure"
+      - "traefik.http.services.stern-obot.loadbalancer.server.port=8080"
+    restart: unless-stopped
+
+  langfuse:
+    image: langfuse/langfuse:latest
+    environment:
+      DATABASE_URL: postgresql://cockpit:${POSTGRES_PASSWORD:-cockpitstern2026}@postgres:5432/langfuse
+      NEXTAUTH_URL: https://trace-stern-os2.ori3com.cloud
+      NEXTAUTH_SECRET: ${SECRET_KEY}
+      SALT: ${LANGFUSE_SALT:-changemesalt}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.stern-langfuse.rule=Host(`trace-stern-os2.ori3com.cloud`)"
+      - "traefik.http.routers.stern-langfuse.tls.certresolver=le"
+      - "traefik.http.routers.stern-langfuse.entrypoints=websecure"
+      - "traefik.http.services.stern-langfuse.loadbalancer.server.port=3000"
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  traefik-certs:

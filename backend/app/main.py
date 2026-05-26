@@ -9,6 +9,8 @@ from app.core.database import init_db
 from app.api.chat import router as chat_router
 from app.api.profile import router as profile_router
 from app.api.session import router as session_router
+from app.api.ada import router as ada_router
+from app.api.design import router as design_router
 
 logging.basicConfig(level=logging.INFO if settings.ENVIRONMENT == "development" else logging.WARNING)
 logger = logging.getLogger(__name__)
@@ -39,6 +41,8 @@ app.add_middleware(
 app.include_router(chat_router, prefix="/api", tags=["chat"])
 app.include_router(profile_router, prefix="/api", tags=["profile"])
 app.include_router(session_router, prefix="/api", tags=["session"])
+app.include_router(ada_router, prefix="/ada", tags=["ada"])
+app.include_router(design_router, prefix="/design", tags=["design"])
 
 
 @app.get("/health")
