@@ -116,7 +116,8 @@ services:
     image: ghcr.io/obot-platform/obot:latest
     environment:
       OBOT_SERVER_URL: http://obot:8080
-      OBOT_POSTGRES_DSN: postgresql://cockpit:${POSTGRES_PASSWORD:-cockpitstern2026}@postgres:5432/obot
+      OBOT_DATABASE_CONNECTION: postgresql://cockpit:${POSTGRES_PASSWORD:-cockpitstern2026}@postgres:5432/obot?sslmode=disable
+      OBOT_SERVER_SKIP_EMBEDDED_POSTGRES: "true"
     depends_on:
       postgres:
         condition: service_healthy
@@ -131,7 +132,7 @@ services:
     restart: unless-stopped
 
   langfuse:
-    image: langfuse/langfuse:latest
+    image: langfuse/langfuse:2
     environment:
       DATABASE_URL: postgresql://cockpit:${POSTGRES_PASSWORD:-cockpitstern2026}@postgres:5432/langfuse
       NEXTAUTH_URL: https://trace-stern-os2.ori3com.cloud
