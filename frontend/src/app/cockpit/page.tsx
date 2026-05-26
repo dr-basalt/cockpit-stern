@@ -33,6 +33,12 @@ export default function CockpitPage() {
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const p = params.get("profile");
+    if (p && !profileId) setProfileId(p);
+  }, []);
+
+  useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 

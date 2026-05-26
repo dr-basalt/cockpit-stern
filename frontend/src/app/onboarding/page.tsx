@@ -40,7 +40,10 @@ export default function OnboardingPage() {
       });
       if (res.ok) {
         const data = await res.json();
-        setStatus(`Profil créé: ${data.id}`);
+        setStatus(`Profil créé ! Redirection vers le cockpit...`);
+        setTimeout(() => {
+          window.location.href = `/cockpit?profile=${data.id}`;
+        }, 1000);
       } else {
         setStatus(`Erreur: ${res.status}`);
       }
