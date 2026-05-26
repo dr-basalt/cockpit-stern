@@ -97,11 +97,15 @@ services:
     restart: unless-stopped
 
   nango:
-    image: nangohq/nango-server:hosted
+    image: nangohq/nango:latest
     environment:
-      SERVER_URL: http://nango:3003
-      NANGO_SECRET_KEY: ${NANGO_SECRET_KEY:-changeme}
-      POSTGRES_URL: postgresql://cockpit:${POSTGRES_PASSWORD:-cockpitstern2026}@postgres:5432/nango
+      NANGO_DB_HOST: postgres
+      NANGO_DB_PORT: "5432"
+      NANGO_DB_NAME: nango
+      NANGO_DB_USER: cockpit
+      NANGO_DB_PASSWORD: ${POSTGRES_PASSWORD:-cockpitstern2026}
+      NANGO_SECRET_KEY_DEV: ${NANGO_SECRET_KEY:-changeme}
+      SERVER_PORT: "3003"
     depends_on:
       postgres:
         condition: service_healthy
@@ -118,6 +122,8 @@ services:
     environment:
       OBOT_SERVER_URL: http://obot:8080
       OBOT_SERVER_DSN: postgresql://cockpit:${POSTGRES_PASSWORD:-cockpitstern2026}@postgres:5432/obot?sslmode=disable
+      OPENAI_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENAI_BASE_URL: https://openrouter.ai/api/v1
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     depends_on:
