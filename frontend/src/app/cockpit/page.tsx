@@ -45,7 +45,7 @@ export default function CockpitPage() {
     inputRef.current?.focus();
   }, [s]);
 
-  const pro = s.profile as Record<string, unknown> | null;
+  const pro = s.profile as Record<string, string | string[] | number> | null;
 
   return (
     <div className="flex h-screen">
@@ -59,14 +59,14 @@ export default function CockpitPage() {
             <div className="text-[var(--text-secondary)]">Profil {pro.hd_profile as string}</div>
             <div className="mt-3 text-[10px] font-bold tracking-widest uppercase text-[var(--text-tertiary)]">Forces</div>
             <div className="flex flex-wrap gap-1">
-              {(pro.clifton_top5 as string[] || []).map((s) => (
+              {(Array.isArray(pro.clifton_top5) ? pro.clifton_top5 : []).map((s: string) => (
                 <span key={s} className="px-1.5 py-0.5 rounded text-[10px] font-semibold"
                   style={{ background: "var(--agent-clone-glow)", color: "var(--agent-clone)" }}>{s}</span>
               ))}
             </div>
             <div className="mt-2 text-[10px] font-bold tracking-widest uppercase text-[var(--text-tertiary)]">Blind spots</div>
             <div className="flex flex-wrap gap-1">
-              {(pro.clifton_bottom5 as string[] || []).map((s) => (
+              {(Array.isArray(pro.clifton_bottom5) ? pro.clifton_bottom5 : []).map((s: string) => (
                 <span key={s} className="px-1.5 py-0.5 rounded text-[10px] font-semibold"
                   style={{ background: "var(--agent-anti-glow)", color: "var(--agent-anti)" }}>{s}</span>
               ))}
