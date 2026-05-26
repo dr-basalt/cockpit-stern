@@ -116,8 +116,7 @@ services:
     image: ghcr.io/obot-platform/obot:latest
     environment:
       OBOT_SERVER_URL: http://obot:8080
-      OBOT_DATABASE_CONNECTION: postgresql://cockpit:${POSTGRES_PASSWORD:-cockpitstern2026}@postgres:5432/obot?sslmode=disable
-      OBOT_SERVER_SKIP_EMBEDDED_POSTGRES: "true"
+      OBOT_SERVER_DSN: postgresql://cockpit:${POSTGRES_PASSWORD:-cockpitstern2026}@postgres:5432/obot?sslmode=disable
     depends_on:
       postgres:
         condition: service_healthy
