@@ -105,7 +105,10 @@ services:
       NANGO_DB_USER: cockpit
       NANGO_DB_PASSWORD: ${POSTGRES_PASSWORD:-cockpitstern2026}
       NANGO_SECRET_KEY_DEV: ${NANGO_SECRET_KEY:-changeme}
+      NANGO_SECRET_KEY: ${NANGO_SECRET_KEY:-changeme}
       SERVER_PORT: "3003"
+      NANGO_SERVER_URL: https://nango-stern-os2.ori3com.cloud
+      NANGO_CALLBACK_URL: https://nango-stern-os2.ori3com.cloud/oauth/callback
     depends_on:
       postgres:
         condition: service_healthy
