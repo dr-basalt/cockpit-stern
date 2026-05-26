@@ -204,22 +204,24 @@ async def chat_stream(ws: WebSocket):
 
                 state, config = await _build_graph_state(profile, message, session_id, energy_level)
 
-            # Stream graph execution node by node
+            # Stream graph execution — collect all, send only final
             last_agent = "sp"
             last_content = ""
 
             async for event in graph.astream(state, stream_mode="updates"):
                 for node_name, node_output in event.items():
                     agent = node_output.get("active_agent")
-                    if agent and agent != last_agent:
+                    if agent:
                         last_agent = agent
-                        await ws.send_json({"type": "agent", "agent": agent})
 
                     msgs = node_output.get("messages", [])
                     for msg in msgs:
-                        content = msg.content if hasattr(msg, "content") else str(msg)
-                        last_content = content
-                        await ws.send_json({"type": "chunk", "content": content, "agent": last_agent})
+                        last_content = msg.content if hasattr(msg, "content") else str(msg)
+
+            # Send the routed agent + final formatted message
+            await ws.send_json({"type": "agent", "agent": last_agent})
+            if last_content:
+                await ws.send_json({"type": "chunk", "content": last_content, "agent": last_agent})
 
             # Send metadata
             await ws.send_json({

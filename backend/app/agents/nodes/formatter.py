@@ -1,53 +1,36 @@
 import logging
 
 from langchain_core.messages import AIMessage
-import litellm
 
 from app.agents.state import AgentState
-from app.services.inversion import FORMATTER_RULES
 
 logger = logging.getLogger(__name__)
 
-MODEL = "openrouter/google/gemini-2.0-flash-001"
-FALLBACK_MODEL = "openrouter/anthropic/claude-haiku-4-5"
+HD_FOOTERS = {
+    "Generator": "\n\n---\n_Ton sacral répond à quoi ? Oui ou Non._",
+    "Manifesting Generator": "\n\n---\n_Tu peux avancer sur plusieurs en parallèle. Qu'est-ce qui t'attire ?_",
+    "Projector": "\n\n---\n_Si tu étais invité à choisir, laquelle te reconnaît le plus ?_",
+    "Manifestor": "",  # Pas de question — le Manifestor initie seul
+    "Reflector": "\n\n---\n_Laisse cette idée reposer. Dans quelques jours, est-ce que ça résonne encore ?_",
+}
 
 
 async def formatter_node(state: AgentState) -> dict:
     """
-    Post-processing: reformats any agent output according to HD type rules.
+    Post-processing léger — PAS de réécriture LLM.
+    Ajoute un footer adapté au HD type si l'agent actif est clone ou anti.
+    Le contenu original est TOUJOURS préservé intact.
     """
     hd_type = state.get("profile", {}).get("hd_type", "Generator")
-    format_rule = FORMATTER_RULES.get(hd_type, FORMATTER_RULES["Generator"])
     active_agent = state.get("active_agent", "clone")
-
     last_msg = state["messages"][-1].content if state["messages"] else ""
 
-    system_prompt = (
-        f"Tu es le formateur de sortie du Cockpit Stern.\n"
-        f"L'agent actif est: {active_agent}\n"
-        f"Le type HD de l'utilisateur est: {hd_type}\n\n"
-        f"RÈGLE DE FORMATAGE:\n{format_rule}\n\n"
-        f"Reformate le message suivant selon cette règle.\n"
-        f"Garde le contenu intact. Change uniquement la FORME.\n"
-        f"Si le message est déjà bien formaté, retourne-le tel quel.\n"
-    )
+    # SP et real : pas de footer, le message est déjà adapté à l'autorité
+    if active_agent in ("sp", "real"):
+        return {"messages": [AIMessage(content=last_msg)]}
 
-    messages_for_llm = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": f"Message à formater:\n\n{last_msg}"},
-    ]
+    # Clone et anti : ajoute un footer HD type (pas de réécriture)
+    footer = HD_FOOTERS.get(hd_type, "")
+    content = last_msg + footer
 
-    try:
-        response = await litellm.acompletion(model=MODEL, messages=messages_for_llm, max_tokens=2048)
-        content = response.choices[0].message.content
-    except Exception as e:
-        logger.warning(f"Formatter model failed, falling back: {e}")
-        try:
-            response = await litellm.acompletion(model=FALLBACK_MODEL, messages=messages_for_llm, max_tokens=2048)
-            content = response.choices[0].message.content
-        except Exception:
-            content = last_msg  # passthrough if both fail
-
-    return {
-        "messages": [AIMessage(content=content)],
-    }
+    return {"messages": [AIMessage(content=content)]}
