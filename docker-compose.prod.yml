@@ -117,6 +117,8 @@ services:
     environment:
       OBOT_SERVER_URL: http://obot:8080
       OBOT_SERVER_DSN: postgresql://cockpit:${POSTGRES_PASSWORD:-cockpitstern2026}@postgres:5432/obot?sslmode=disable
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     depends_on:
       postgres:
         condition: service_healthy
