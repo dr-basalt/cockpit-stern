@@ -103,17 +103,19 @@ services:
   nango:
     image: nangohq/nango-server:hosted
     environment:
-      NANGO_DB_HOST: postgres
+      NANGO_DB_HOST: nango-db
       NANGO_DB_PORT: "5432"
       NANGO_DB_NAME: nango
-      NANGO_DB_USER: cockpit
-      NANGO_DB_PASSWORD: ${POSTGRES_PASSWORD:-cockpitstern2026}
-      NANGO_SECRET_KEY_DEV: ${NANGO_SECRET_KEY:-changeme}
-      NANGO_SECRET_KEY: ${NANGO_SECRET_KEY:-changeme}
+      NANGO_DB_USER: nango
+      NANGO_DB_PASSWORD: nango
+      NANGO_DB_SSL: "false"
+      NANGO_ENCRYPTION_KEY: ${NANGO_SECRET_KEY:-changemenangosecretkey32ch}
       SERVER_PORT: "3003"
       NANGO_SERVER_URL: https://nango-stern-os2.ori3com.cloud
-      NANGO_CALLBACK_URL: https://nango-stern-os2.ori3com.cloud/oauth/callback
-      NANGO_DATABASE_URL: postgresql://cockpit:${POSTGRES_PASSWORD:-cockpitstern2026}@postgres:5432/nango
+      NANGO_PUBLIC_SERVER_URL: https://nango-stern-os2.ori3com.cloud
+      FLAG_AUTH_ENABLED: "true"
+      NANGO_DASHBOARD_USERNAME: admin
+      NANGO_DASHBOARD_PASSWORD: ${NANGO_SECRET_KEY:-changeme}
     depends_on:
       postgres:
         condition: service_healthy
