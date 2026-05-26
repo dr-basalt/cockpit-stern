@@ -97,7 +97,7 @@ services:
     restart: unless-stopped
 
   nango:
-    image: nangohq/nango:latest
+    image: nangohq/nango-server:hosted
     environment:
       NANGO_DB_HOST: postgres
       NANGO_DB_PORT: "5432"
