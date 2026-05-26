@@ -174,8 +174,10 @@ services:
     environment:
       PENPOT_FLAGS: enable-access-tokens disable-email-verification disable-registration
       PENPOT_BACKEND_URI: http://penpot-backend:6060
+      PENPOT_EXPORTER_URI: http://penpot-exporter:6061
     depends_on:
       - penpot-backend
+      - penpot-exporter
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.stern-penpot.rule=Host(`penpot-stern-os2.ori3com.cloud`)"
@@ -188,8 +190,7 @@ services:
     image: penpotapp/exporter:latest
     environment:
       PENPOT_PUBLIC_URI: http://penpot-frontend
-    depends_on:
-      - penpot-frontend
+      PENPOT_REDIS_URI: redis://redis/2
     restart: unless-stopped
 
 volumes:
