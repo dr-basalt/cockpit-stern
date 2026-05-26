@@ -1,0 +1,46 @@
+@import "tailwindcss";
+
+:root {
+  --agent-sp: #1BB68A;
+  --agent-sp-dim: #0D6B52;
+  --agent-sp-glow: rgba(27,182,138,0.12);
+  --agent-clone: #7B6EE8;
+  --agent-clone-dim: #4A3FA8;
+  --agent-clone-glow: rgba(123,110,232,0.12);
+  --agent-anti: #E05A2B;
+  --agent-anti-dim: #8C3518;
+  --agent-anti-glow: rgba(224,90,43,0.12);
+  --agent-real: #C9851A;
+  --agent-real-dim: #7A4F0E;
+  --agent-real-glow: rgba(201,133,26,0.12);
+  --color-ok: #1BB68A;
+  --color-warn: #C9851A;
+  --color-stop: #E05A2B;
+  --bg-void: #07070D;
+  --bg-surface: #0F0F1A;
+  --bg-raised: #161625;
+  --bg-overlay: #1D1D30;
+  --text-primary: #F2F2FA;
+  --text-secondary: #9090B0;
+  --text-tertiary: #5A5A7A;
+  --border-subtle: rgba(255,255,255,0.06);
+  --border-default: rgba(255,255,255,0.10);
+  --border-focus: #7B6EE8;
+  --font-display: 'Syne', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+body {
+  background: var(--bg-void);
+  color: var(--text-primary);
+  font-family: var(--font-display);
+}
+
+@keyframes msgIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes pulse-dot {
+  0%, 80%, 100% { transform: scale(0); }
+  40% { transform: scale(1); }
+}
