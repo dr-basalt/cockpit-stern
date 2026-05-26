@@ -20,6 +20,10 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     logger.info(f"Starting Cockpit Stern · {settings.ENVIRONMENT}")
     await init_db()
+    from app.services.langfuse_callback import init_langfuse
+    init_langfuse()
+    from app.services.pattern_detector_task import start_pattern_detector
+    start_pattern_detector()
     yield
     logger.info("Shutting down Cockpit Stern")
 

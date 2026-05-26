@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "penpot": {
+      "type": "http",
+      "url": "https://penpot-stern-os2.ori3com.cloud/api/rpc"
+    }
+  }
+}

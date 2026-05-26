@@ -225,7 +225,19 @@ async def chat_stream(ws: WebSocket):
                     await ws.send_json({"type": "error", "detail": "Profile not found"})
                     continue
 
+                # Build conversation history for WS too
+                ws_session_key = f"{session_id}:{profile_id}"
+                ws_history = _session_history.get(ws_session_key, [])
+                ws_messages = []
+                for h in ws_history[-10:]:
+                    if h["role"] == "user":
+                        ws_messages.append(HumanMessage(content=h["content"]))
+                    else:
+                        ws_messages.append(LCAIMessage(content=h["content"]))
+                ws_messages.append(HumanMessage(content=message))
+
                 state, config = await _build_graph_state(profile, message, session_id, energy_level)
+                state["messages"] = ws_messages  # override with full history
 
             # Stream graph execution — collect all, send only final
             last_agent = "sp"
@@ -236,7 +248,6 @@ async def chat_stream(ws: WebSocket):
                     agent = node_output.get("active_agent")
                     if agent:
                         last_agent = agent
-
                     msgs = node_output.get("messages", [])
                     for msg in msgs:
                         last_content = msg.content if hasattr(msg, "content") else str(msg)
@@ -256,7 +267,15 @@ async def chat_stream(ws: WebSocket):
                 "hitl_token": state.get("hitl_token"),
             })
 
-            # Store interactions
+            # Store in session history
+            if ws_session_key not in _session_history:
+                _session_history[ws_session_key] = []
+            _session_history[ws_session_key].append({"role": "user", "content": message})
+            if last_content:
+                _session_history[ws_session_key].append({"role": "assistant", "content": last_content})
+            _session_history[ws_session_key] = _session_history[ws_session_key][-20:]
+
+            # Store in memory service
             await memory_service.store_interaction(UUID(profile_id), {
                 "role": "user", "content": message, "agent": last_agent, "session_id": session_id,
             })
@@ -275,3 +294,42 @@ async def chat_stream(ws: WebSocket):
             await ws.send_json({"type": "error", "detail": str(e)})
         except Exception:
             pass
+
+
+# --- HITL Confirmation ---
+
+_hitl_pending: dict[str, dict] = {}
+
+
+class HitlDecision(BaseModel):
+    decision: str  # "yes" | "no"
+
+
+@router.post("/chat/hitl/{hitl_token}")
+async def hitl_confirm(hitl_token: str, body: HitlDecision, db: AsyncSession = Depends(get_db)):
+    """Confirm or reject an irreversible decision."""
+    decision = body.decision.lower()
+    if decision not in ("yes", "no"):
+        raise HTTPException(status_code=400, detail="Decision must be 'yes' or 'no'")
+
+    # Store the decision
+    await memory_service.store_decision(UUID("00000000-0000-0000-0000-000000000000"), {
+        "hitl_token": hitl_token,
+        "decision": decision,
+        "timestamp": str(__import__("datetime").datetime.utcnow()),
+    })
+
+    if decision == "yes":
+        return {
+            "message": "Décision confirmée. L'action sera exécutée.",
+            "active_agent": "real",
+            "hitl_token": hitl_token,
+            "status": "confirmed",
+        }
+    else:
+        return {
+            "message": "Décision annulée. Aucune action prise.",
+            "active_agent": "real",
+            "hitl_token": hitl_token,
+            "status": "rejected",
+        }

@@ -151,7 +151,49 @@ services:
       - "traefik.http.services.stern-langfuse.loadbalancer.server.port=3000"
     restart: unless-stopped
 
+  penpot-backend:
+    image: penpotapp/backend:latest
+    environment:
+      PENPOT_FLAGS: enable-access-tokens disable-email-verification disable-registration
+      PENPOT_SECRET_KEY: ${SECRET_KEY}
+      PENPOT_DATABASE_URI: postgresql://cockpit:${POSTGRES_PASSWORD:-cockpitstern2026}@postgres/penpot
+      PENPOT_REDIS_URI: redis://redis/1
+      PENPOT_ASSETS_STORAGE_BACKEND: assets-fs
+      PENPOT_STORAGE_ASSETS_FS_DIRECTORY: /opt/data/assets
+    volumes:
+      - penpot-assets:/opt/data/assets
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  penpot-frontend:
+    image: penpotapp/frontend:latest
+    environment:
+      PENPOT_FLAGS: enable-access-tokens disable-email-verification disable-registration
+      PENPOT_BACKEND_URI: http://penpot-backend:6060
+    depends_on:
+      - penpot-backend
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.stern-penpot.rule=Host(`penpot-stern-os2.ori3com.cloud`)"
+      - "traefik.http.routers.stern-penpot.tls.certresolver=le"
+      - "traefik.http.routers.stern-penpot.entrypoints=websecure"
+      - "traefik.http.services.stern-penpot.loadbalancer.server.port=80"
+    restart: unless-stopped
+
+  penpot-exporter:
+    image: penpotapp/exporter:latest
+    environment:
+      PENPOT_PUBLIC_URI: http://penpot-frontend
+    depends_on:
+      - penpot-frontend
+    restart: unless-stopped
+
 volumes:
   pgdata:
   redisdata:
   traefik-certs:
+  penpot-assets:

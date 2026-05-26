@@ -22,6 +22,12 @@ class Settings(BaseSettings):
     GRAPHITI_NEO4J_USER: str = ""
     GRAPHITI_NEO4J_PASSWORD: str = ""
 
+    # MCP Gateway
+    OBOT_URL: str = "http://obot:8080"
+    NANGO_URL: str = "http://nango:3003"
+    NANGO_SECRET_KEY: str = ""
+    OPENROUTER_API_KEY: str = ""
+
     # App
     SECRET_KEY: str = "change-me-in-production"
     ENVIRONMENT: str = "development"
