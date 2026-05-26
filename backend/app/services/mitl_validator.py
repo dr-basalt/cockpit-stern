@@ -6,8 +6,8 @@ import litellm
 
 logger = logging.getLogger(__name__)
 
-MODEL = "anthropic/claude-sonnet-4"
-FALLBACK_MODEL = "anthropic/claude-haiku-4-5"
+MODEL = "openrouter/anthropic/claude-sonnet-4"
+FALLBACK_MODEL = "openrouter/anthropic/claude-haiku-4-5"
 
 
 @dataclass

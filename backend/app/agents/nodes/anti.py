@@ -7,8 +7,8 @@ from app.agents.state import AgentState
 
 logger = logging.getLogger(__name__)
 
-MODEL = "together/deepseek-v3"
-FALLBACK_MODEL = "anthropic/claude-haiku-4-5"
+MODEL = "openrouter/deepseek/deepseek-chat-v3-0324"
+FALLBACK_MODEL = "openrouter/anthropic/claude-haiku-4-5"
 
 
 async def anti_node(state: AgentState) -> dict:

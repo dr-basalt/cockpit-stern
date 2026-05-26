@@ -8,8 +8,8 @@ from app.services.inversion import FORMATTER_RULES
 
 logger = logging.getLogger(__name__)
 
-MODEL = "koyeb/gemini-flash-2.0"
-FALLBACK_MODEL = "anthropic/claude-haiku-4-5"
+MODEL = "openrouter/google/gemini-2.0-flash-001"
+FALLBACK_MODEL = "openrouter/anthropic/claude-haiku-4-5"
 
 
 async def formatter_node(state: AgentState) -> dict:
