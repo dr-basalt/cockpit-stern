@@ -48,3 +48,17 @@ export async function getDesignTokens() {
 export function getWsUrl() {
   return API.replace(/^http/, "ws") + "/api/chat/stream";
 }
+
+export async function getIntegrations(profileId: string) {
+  const res = await fetch(`${API}/api/session/${profileId}/integrations`);
+  return res.json();
+}
+
+export async function connectIntegration(profileId: string, providerKey: string) {
+  const res = await fetch(`${API}/api/session/${profileId}/connect`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ provider_key: providerKey }),
+  });
+  return res.json();
+}

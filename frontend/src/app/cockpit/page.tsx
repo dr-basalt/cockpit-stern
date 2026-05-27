@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
 import { useCockpitStore, type AgentType } from "@/lib/store";
-import { sendChat, getProfile, getWsUrl, hitlConfirm } from "@/lib/api";
+import { sendChat, getProfile, getWsUrl, hitlConfirm, getIntegrations, connectIntegration } from "@/lib/api";
 
 const AGENTS: { key: AgentType; label: string; color: string }[] = [
   { key: "sp", label: "SP", color: "var(--agent-sp)" },
@@ -15,6 +15,9 @@ export default function CockpitPage() {
   const s = useCockpitStore();
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const [integrations, setIntegrations] = useState<{key:string,name:string,icon:string,category:string,connected:boolean}[]>([]);
+  const [showIntegrations, setShowIntegrations] = useState(false);
+  const [connecting, setConnecting] = useState("");
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -22,6 +25,7 @@ export default function CockpitPage() {
     if (p && !s.profileId) {
       s.setProfileId(p);
       getProfile(p).then((data) => s.setProfile(data)).catch(() => {});
+      getIntegrations(p).then((data) => setIntegrations(data.integrations || [])).catch(() => {});
     }
   }, []);
 
@@ -79,6 +83,50 @@ export default function CockpitPage() {
           <div className="text-xs text-[var(--text-tertiary)]">Aucun profil chargé</div>
         )}
 
+        {/* Integrations */}
+        <div className="space-y-2">
+          <button onClick={() => setShowIntegrations(!showIntegrations)}
+            className="w-full flex items-center justify-between text-[10px] font-bold tracking-widest uppercase text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] transition-colors">
+            <span>Outils connectés</span>
+            <span>{showIntegrations ? "▾" : "▸"}</span>
+          </button>
+          {showIntegrations && (
+            <div className="space-y-1 max-h-48 overflow-y-auto">
+              {Object.entries(
+                integrations.reduce((acc, i) => { (acc[i.category] = acc[i.category] || []).push(i); return acc; }, {} as Record<string, typeof integrations>)
+              ).map(([cat, items]) => (
+                <div key={cat}>
+                  <div className="text-[9px] text-[var(--text-tertiary)] mt-2 mb-1">{cat}</div>
+                  {items.map((integ) => (
+                    <button key={integ.key}
+                      disabled={integ.connected || connecting === integ.key}
+                      onClick={async () => {
+                        setConnecting(integ.key);
+                        try {
+                          const data = await connectIntegration(s.profileId, integ.key);
+                          if (data.oauth_url) window.open(data.oauth_url, "_blank");
+                        } catch {}
+                        setConnecting("");
+                      }}
+                      className="w-full flex items-center gap-2 px-1.5 py-1 rounded text-[11px] hover:bg-[var(--bg-raised)] transition-colors disabled:opacity-40"
+                    >
+                      <span>{integ.icon}</span>
+                      <span className="flex-1 text-left">{integ.name}</span>
+                      {integ.connected
+                        ? <span className="text-[9px]" style={{color:"var(--agent-sp)"}}>✓</span>
+                        : connecting === integ.key
+                          ? <span className="text-[9px] text-[var(--text-tertiary)]">...</span>
+                          : <span className="text-[9px] text-[var(--text-tertiary)]">+</span>
+                      }
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Energy */}
         <div className="mt-auto space-y-3">
           <div className="text-[10px] font-bold tracking-widest uppercase text-[var(--text-tertiary)]">Énergie</div>
           <div className="flex items-center gap-2">
