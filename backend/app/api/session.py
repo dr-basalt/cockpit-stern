@@ -102,7 +102,7 @@ async def create_connect_url(profile_id: UUID, req: ConnectRequest):
                 },
                 json={"end_user": {"id": str(profile_id), "email": f"{str(profile_id)[:8]}@stern-os2.ori3com.cloud"}},
             )
-            if r.status_code != 200:
+            if r.status_code not in (200, 201):
                 return {"error": f"Nango session failed: {r.status_code}", "detail": r.text}
 
             session_data = r.json()["data"]
