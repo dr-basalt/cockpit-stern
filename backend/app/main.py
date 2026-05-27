@@ -1,7 +1,7 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
@@ -52,3 +52,22 @@ app.include_router(design_router, prefix="/design", tags=["design"])
 @app.get("/health")
 async def health():
     return {"status": "ok", "environment": settings.ENVIRONMENT}
+
+
+# OAuth callback proxy — routes through our trusted domain to avoid Safe Browsing flags
+@app.get("/oauth/callback")
+async def oauth_callback_proxy(request: Request):
+    """Proxy OAuth callbacks to Nango via our trusted domain."""
+    import httpx
+    params = dict(request.query_params)
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.get(
+            f"http://nango:3003/oauth/callback",
+            params=params,
+            follow_redirects=False,
+        )
+        if r.status_code in (301, 302, 303, 307, 308):
+            from fastapi.responses import RedirectResponse
+            return RedirectResponse(url=r.headers.get("location", "/cockpit"))
+        from fastapi.responses import Response
+        return Response(content=r.content, status_code=r.status_code, headers=dict(r.headers))

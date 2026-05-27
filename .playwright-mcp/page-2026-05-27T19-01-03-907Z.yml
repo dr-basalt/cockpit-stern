@@ -1,0 +1,16 @@
+- generic [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]: Cockpit Stern · Onboarding
+    - generic [ref=e45]:
+      - heading "Étape 3 — Mantra & Invariants" [level=2] [ref=e46]
+      - paragraph [ref=e47]: Tes règles non-négociables. Les agents les respectent toujours.
+      - generic [ref=e48]:
+        - generic [ref=e49]: Mantra (une phrase)
+        - textbox "Revenue before infra" [ref=e50]
+      - generic [ref=e51]:
+        - generic [ref=e52]: Invariants (séparés par virgule)
+        - textbox "Revenue before infra, Ship fast, No vanity metrics" [ref=e53]
+    - generic [ref=e32]:
+      - button "Retour" [ref=e44]
+      - button "Suivant" [active] [ref=e33]
+  - alert [ref=e34]

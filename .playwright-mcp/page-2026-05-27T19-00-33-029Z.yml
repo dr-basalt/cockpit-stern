@@ -1,0 +1,45 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]: Cockpit Stern · Onboarding
+    - generic [ref=e9]:
+      - heading "Étape 1 — Human Design" [level=2] [ref=e10]
+      - paragraph [ref=e11]: Ton type et ton autorité déterminent comment les agents te parlent.
+      - generic [ref=e12]:
+        - generic [ref=e13]: Nom
+        - textbox "Ton prénom" [ref=e14]
+      - generic [ref=e15]:
+        - generic [ref=e16]:
+          - generic [ref=e17]: Type HD
+          - combobox [ref=e18]:
+            - option "Generator" [selected]
+            - option "Manifesting Generator"
+            - option "Projector"
+            - option "Manifestor"
+            - option "Reflector"
+        - generic [ref=e19]:
+          - generic [ref=e20]: Autorité
+          - combobox [ref=e21]:
+            - option "Sacral" [selected]
+            - option "Emotional"
+            - option "Splenic"
+            - option "Ego"
+            - option "Self-Projected"
+            - option "Mental"
+            - option "Lunar"
+            - option "None"
+      - generic [ref=e22]:
+        - generic [ref=e23]:
+          - generic [ref=e24]: Profil
+          - textbox "4/1" [ref=e25]
+        - generic [ref=e26]:
+          - generic [ref=e27]: Définition
+          - combobox [ref=e28]:
+            - option "Simple" [selected]
+            - option "Split"
+            - option "Triple Split"
+            - option "Quadruple Split"
+        - generic [ref=e29]:
+          - generic [ref=e30]: Signature
+          - textbox [ref=e31]: Satisfaction
+    - button "Suivant" [ref=e33]
+  - alert [ref=e34]

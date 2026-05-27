@@ -108,7 +108,10 @@ async def create_connect_url(profile_id: UUID, req: ConnectRequest):
             session_data = r.json()["data"]
             token = session_data["token"]
 
+            # Use Nango internal URL for the connect initiation (it redirects to the SaaS)
+            # The callback will come back through api-stern-os2 (trusted domain, no Safe Browsing flag)
             oauth_url = f"https://nango-stern-os2.ori3com.cloud/oauth/connect/{req.provider_key}?connect_session_token={token}"
+            # TODO: once Safe Browsing clears, this can stay as-is
             return {"oauth_url": oauth_url, "session_token": token}
     except Exception as e:
         return {"error": str(e)}

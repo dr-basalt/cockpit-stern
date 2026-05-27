@@ -1,0 +1,16 @@
+- generic [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]: Cockpit Stern · Onboarding
+    - generic [ref=e35]:
+      - heading "Étape 2 — Clifton StrengthsFinder" [level=2] [ref=e36]
+      - paragraph [ref=e37]: Tes 5 forces top = le Clone produit dans ce style. Tes 5 bottom = l'Anti challenge là-dessus.
+      - generic [ref=e38]:
+        - generic [ref=e39]: Top 5 (séparés par virgule)
+        - textbox "Idéation, Futuriste, Stratégique, Individualisation, Contexte" [ref=e40]
+      - generic [ref=e41]:
+        - generic [ref=e42]: Bottom 5 (séparés par virgule)
+        - textbox "Discipline, Harmonie, Prudent, Équitable, Adaptabilité" [ref=e43]
+    - generic [ref=e32]:
+      - button "Retour" [ref=e44]
+      - button "Suivant" [active] [ref=e33]
+  - alert [ref=e34]

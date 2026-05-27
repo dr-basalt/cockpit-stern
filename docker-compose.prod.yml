@@ -113,6 +113,7 @@ services:
       SERVER_PORT: "3003"
       NANGO_SERVER_URL: https://nango-stern-os2.ori3com.cloud
       NANGO_PUBLIC_SERVER_URL: https://nango-stern-os2.ori3com.cloud
+      NANGO_CALLBACK_URL: https://api-stern-os2.ori3com.cloud/oauth/callback
       FLAG_AUTH_ENABLED: "false"
     depends_on:
       postgres:

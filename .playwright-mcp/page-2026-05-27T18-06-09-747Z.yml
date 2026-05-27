@@ -1,0 +1,4 @@
+- generic [active] [ref=e1]:
+  - heading "Cockpit Stern â€” Create GitHub App" [level=2] [ref=e2]
+  - paragraph [ref=e3]: "Click the button to create the GitHub OAuth App automatically:"
+  - button "Create Cockpit Stern GitHub App" [ref=e5] [cursor=pointer]
