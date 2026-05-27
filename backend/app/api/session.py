@@ -100,7 +100,7 @@ async def create_connect_url(profile_id: UUID, req: ConnectRequest):
                     "Authorization": f"Bearer {NANGO_SECRET}",
                     "Content-Type": "application/json",
                 },
-                json={"end_user": {"id": str(profile_id), "email": f"{profile_id}@cockpit-stern"}},
+                json={"end_user": {"id": str(profile_id), "email": f"{str(profile_id)[:8]}@stern-os2.ori3com.cloud"}},
             )
             if r.status_code != 200:
                 return {"error": f"Nango session failed: {r.status_code}", "detail": r.text}
