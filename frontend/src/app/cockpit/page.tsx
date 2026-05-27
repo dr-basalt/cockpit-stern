@@ -16,7 +16,7 @@ export default function CockpitPage() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [integrations, setIntegrations] = useState<{key:string,name:string,icon:string,category:string,connected:boolean}[]>([]);
-  const [showIntegrations, setShowIntegrations] = useState(false);
+  const [showIntegrations, setShowIntegrations] = useState(true);
   const [connecting, setConnecting] = useState("");
 
   useEffect(() => {
@@ -25,9 +25,15 @@ export default function CockpitPage() {
     if (p && !s.profileId) {
       s.setProfileId(p);
       getProfile(p).then((data) => s.setProfile(data)).catch(() => {});
-      getIntegrations(p).then((data) => setIntegrations(data.integrations || [])).catch(() => {});
     }
   }, []);
+
+  // Load integrations whenever profileId is available
+  useEffect(() => {
+    if (s.profileId) {
+      getIntegrations(s.profileId).then((data) => setIntegrations(data.integrations || [])).catch(() => {});
+    }
+  }, [s.profileId]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
