@@ -1,7 +1,22 @@
-"""MCP Introspector — fait émerger le DDD, les gaps et les skills depuis les MCP tools.
+"""Capability Introspector — fait émerger le DDD depuis TOUTE interface exposée.
 
 Couche 0 → Couche 2 du framework de composition :
-  MCP tools → Entities SCRUDX → Bounded Contexts → Relations → Gaps → Skills suggérées
+  Capabilities → Entities SCRUDX → Bounded Contexts → Relations → Gaps → Skills
+
+Principe : composition par INTERFACES, pas par héritage.
+L'introspecteur voit des CAPABILITIES, pas des protocoles.
+Chaque source (MCP, REST, GraphQL, browser, CLI, DB) produit le même format :
+  { name, description, params } → Entity + SCRUDX mapping
+
+Sources supportées :
+  - MCP tools (tools/list)              → entités + ops SCRUDX
+  - REST/OpenAPI (spec parsing)         → paths → entités + ops SCRUDX
+  - GraphQL (schema introspection)      → types → entités + ops SCRUDX
+  - Browser actions (DOM + LLM)         → forms/boutons → entités + ops SCRUDX
+  - CLI (help parsing)                  → commands → entités + ops SCRUDX
+
+Le protocole d'accès est un détail d'implémentation.
+On ne demande pas "de quel type es-tu ?" mais "que sais-tu faire ?"
 """
 
 import logging
@@ -9,6 +24,14 @@ import re
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
+
+# --- Capability source types ---
+SOURCE_MCP = "mcp"
+SOURCE_REST = "rest"
+SOURCE_GRAPHQL = "graphql"
+SOURCE_BROWSER = "browser"
+SOURCE_CLI = "cli"
+SOURCE_DB = "database"
 
 # --- SCRUDX verb mapping ---
 
@@ -89,6 +112,7 @@ class BoundedContext:
     mcp_server: str
     name: str
     domain: str
+    source_type: str = SOURCE_MCP  # mcp, rest, graphql, browser, cli, database
     entities: dict[str, Entity] = field(default_factory=dict)
     all_params: set = field(default_factory=set)
 
@@ -344,6 +368,7 @@ def introspect_tools(tools_by_server: dict[str, list[dict]]) -> dict:
                 "mcp_server": bc.mcp_server,
                 "name": bc.name,
                 "domain": bc.domain,
+                "source_type": bc.source_type,
                 "entities": [
                     {
                         "name": e.name,
@@ -400,3 +425,146 @@ def introspect_tools(tools_by_server: dict[str, list[dict]]) -> dict:
             "total_suggested_skills": len(suggested_skills),
         },
     }
+
+
+# ============================================================================
+# NORMALISERS — convertissent toute interface en format Capability unifié
+# Chaque source produit : [{ "name": str, "description": str, "params": dict }]
+# = même format que MCP tools/list, quel que soit le protocole
+# ============================================================================
+
+HTTP_METHOD_TO_SCRUDX = {
+    "GET": "R",
+    "POST": "C",
+    "PUT": "U",
+    "PATCH": "U",
+    "DELETE": "D",
+}
+
+
+def normalise_openapi(spec: dict, server_key: str = "") -> tuple[str, list[dict]]:
+    """Normalise OpenAPI/Swagger spec → liste de capabilities au format MCP.
+
+    Chaque path+method devient un "tool" :
+      GET /contacts → { name: "list_contact", params: {query params} }
+      POST /contacts → { name: "create_contact", params: {body schema} }
+    """
+    tools = []
+    paths = spec.get("paths", {})
+
+    for path, methods in paths.items():
+        # Extract entity from path: /api/v1/contacts/{id} → contact
+        segments = [s for s in path.strip("/").split("/") if not s.startswith("{") and s not in ("api", "v1", "v2", "v3")]
+        entity = segments[-1] if segments else "unknown"
+        entity = re.sub(r"s$", "", entity)  # depluralize
+
+        for method, op_spec in methods.items():
+            method = method.upper()
+            if method not in HTTP_METHOD_TO_SCRUDX:
+                continue
+
+            scrudx_op = HTTP_METHOD_TO_SCRUDX[method]
+            verb_map = {"R": "get", "C": "create", "U": "update", "D": "delete"}
+            # If GET on collection (no {id}) → list (Search)
+            if method == "GET" and "{" not in path.split("/")[-1]:
+                verb = "list"
+                scrudx_op = "S"
+            else:
+                verb = verb_map.get(scrudx_op, method.lower())
+
+            tool_name = f"{verb}_{entity}"
+
+            # Extract params
+            params = {}
+            for p in op_spec.get("parameters", []):
+                params[p.get("name", "?")] = p.get("schema", {}).get("type", "string")
+
+            # Extract body schema (simplified)
+            req_body = op_spec.get("requestBody", {})
+            if req_body:
+                content = req_body.get("content", {})
+                json_schema = content.get("application/json", {}).get("schema", {})
+                for prop_name in json_schema.get("properties", {}):
+                    params[prop_name] = "body"
+
+            tools.append({
+                "name": tool_name,
+                "description": op_spec.get("summary", op_spec.get("description", f"{method} {path}")),
+                "params": params,
+            })
+
+    bc_name = server_key or spec.get("info", {}).get("title", "unknown_api")
+    return bc_name, tools
+
+
+def normalise_graphql(schema_introspection: dict, server_key: str = "") -> tuple[str, list[dict]]:
+    """Normalise GraphQL introspection schema → capabilities format.
+
+    Queries → Search/Read ops, Mutations → Create/Update/Delete ops.
+    """
+    tools = []
+    types = schema_introspection.get("data", schema_introspection).get("__schema", {})
+
+    query_type = types.get("queryType", {}).get("name", "Query")
+    mutation_type = types.get("mutationType", {}).get("name", "Mutation")
+
+    for t in types.get("types", []):
+        type_name = t.get("name", "")
+        fields = t.get("fields") or []
+
+        if type_name == query_type:
+            for field in fields:
+                params = {a["name"]: a.get("type", {}).get("name", "?") for a in field.get("args", [])}
+                tools.append({
+                    "name": field["name"],
+                    "description": field.get("description", f"Query: {field['name']}"),
+                    "params": params,
+                })
+
+        elif type_name == mutation_type:
+            for field in fields:
+                params = {a["name"]: a.get("type", {}).get("name", "?") for a in field.get("args", [])}
+                tools.append({
+                    "name": field["name"],
+                    "description": field.get("description", f"Mutation: {field['name']}"),
+                    "params": params,
+                })
+
+    bc_name = server_key or "graphql_api"
+    return bc_name, tools
+
+
+def normalise_cli_help(help_text: str, server_key: str = "") -> tuple[str, list[dict]]:
+    """Normalise CLI --help output → capabilities format.
+
+    Parses "command description" lines → tools.
+    """
+    tools = []
+    for line in help_text.strip().split("\n"):
+        line = line.strip()
+        if not line or line.startswith("-") or line.startswith("Usage"):
+            continue
+        parts = line.split(None, 1)
+        if len(parts) >= 1:
+            name = parts[0].strip()
+            desc = parts[1].strip() if len(parts) > 1 else ""
+            if name and not name.startswith("(") and len(name) < 40:
+                tools.append({"name": name, "description": desc, "params": {}})
+
+    return server_key or "cli_tool", tools
+
+
+def normalise_any(source_type: str, data: dict | str, server_key: str = "") -> tuple[str, list[dict]]:
+    """Universal normaliser — route to the right parser based on source type."""
+    if source_type == SOURCE_MCP:
+        # Already in the right format
+        return server_key, data if isinstance(data, list) else []
+    elif source_type == SOURCE_REST:
+        return normalise_openapi(data, server_key)
+    elif source_type == SOURCE_GRAPHQL:
+        return normalise_graphql(data, server_key)
+    elif source_type == SOURCE_CLI:
+        return normalise_cli_help(data if isinstance(data, str) else "", server_key)
+    else:
+        logger.warning(f"Unknown source type: {source_type}")
+        return server_key, []

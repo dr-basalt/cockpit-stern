@@ -171,6 +171,51 @@ async def mcp_introspect_patterns():
     }
 
 
+class IntrospectExternalRequest(BaseModel):
+    source_type: str  # rest, graphql, cli
+    url: str | None = None  # OpenAPI spec URL or GraphQL endpoint
+    data: dict | str | None = None  # inline spec or CLI help text
+    server_key: str = "external"
+
+
+@router.post("/mcp/introspect/external")
+async def mcp_introspect_external(req: IntrospectExternalRequest):
+    """Introspect any external API (REST/OpenAPI, GraphQL, CLI) and merge with MCP introspection.
+
+    Composition par interfaces : on ne demande pas 'quel protocole ?'
+    mais 'que sais-tu faire ?'. Toute interface produit des capabilities SCRUDX.
+    """
+    from app.services.mcp_introspector import introspect_tools, normalise_any, normalise_openapi, normalise_graphql
+
+    # Fetch MCP tools
+    tools_by_server: dict[str, list[dict]] = {}
+    for key, info in OBOT_MCP_SERVERS.items():
+        tools = await mcp.list_server_tools(info["catalog_id"])
+        if tools:
+            tools_by_server[key] = tools
+
+    # Fetch external spec if URL provided
+    data = req.data
+    if req.url and not data:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.get(req.url)
+            if r.status_code == 200:
+                try:
+                    data = r.json()
+                except Exception:
+                    data = r.text
+
+    if data:
+        ext_key, ext_tools = normalise_any(req.source_type, data, req.server_key)
+        if ext_tools:
+            tools_by_server[ext_key] = ext_tools
+
+    if not tools_by_server:
+        return {"error": "No capabilities found"}
+
+    return introspect_tools(tools_by_server)
+
+
 @router.get("/obot/servers/{tool_key}/tools")
 async def list_server_tools(tool_key: str):
     """Agent runtime: list available tool functions for a specific MCP server."""
