@@ -1,221 +1,185 @@
 import json
 import logging
+from datetime import datetime, timezone, timedelta
 
 from langchain_core.messages import AIMessage
 import litellm
 
 from app.agents.state import AgentState
+from app.services.mcp_client import MCPClient, OBOT_MCP_SERVERS
+from app.services.skills import SKILL_REGISTRY
 
 logger = logging.getLogger(__name__)
 
 MODEL = "openrouter/deepseek/deepseek-chat-v3-0324"
 FALLBACK_MODEL = "openrouter/anthropic/claude-haiku-4-5"
 
-# Intent patterns that trigger MCP tool calls or skills
-MCP_INTENTS = {
-    "morning_brief": {
-        "patterns": ["briefing", "brief du jour", "briefing du jour", "morning brief", "mon planning", "ma journée", "qu'est-ce que j'ai aujourd'hui"],
-        "skill": "morning_brief",
-    },
-    "read_calendar": {
-        "patterns": ["agenda", "calendrier", "mes events", "mes rendez-vous", "mes rdv", "lis mon agenda", "mon emploi du temps", "cette semaine", "demain", "jeudi", "lundi", "qu'est-ce que j'ai"],
-        "tool": "google-calendar",
-        "tool_name": "list_events",
-        "params_from_llm": True,
-    },
-    "read_emails": {
-        "patterns": ["emails", "mails", "mes emails", "courrier", "inbox", "non lus", "derniers mails", "filtre", "cherche dans mes mails", "mail de"],
-        "tool": "gmail",
-        "tool_name": "list_emails",
-        "params_from_llm": True,
-    },
-    "read_drive": {
-        "patterns": ["mes fichiers", "google drive", "drive", "documents récents"],
-        "tool": "google-drive",
-        "tool_name": "list_files",
-        "params": {"max_results": 5},
-    },
-}
+# Cached tool catalog — loaded once, refreshed on demand
+_tool_catalog_cache: dict | None = None
 
 
-def _detect_mcp_intent(message: str) -> dict | None:
-    """Detect if user message matches an MCP intent."""
-    msg_lower = message.lower()
-    for intent_key, intent in MCP_INTENTS.items():
-        if any(p in msg_lower for p in intent["patterns"]):
-            return {**intent, "intent_key": intent_key}
-    return None
+async def _get_tool_catalog() -> str:
+    """Build a text description of all available MCP tools for the LLM.
+
+    This is the GENERIC approach: the LLM sees ALL tools and decides.
+    No hardcoded intents. POEO × POAIG.
+    """
+    global _tool_catalog_cache
+    if _tool_catalog_cache:
+        return _tool_catalog_cache
+
+    mcp = MCPClient()
+    lines = []
+    lines.append("OUTILS DISPONIBLES (MCP servers connectés) :")
+    lines.append("")
+
+    for key, info in OBOT_MCP_SERVERS.items():
+        tools = await mcp.list_server_tools(info["catalog_id"])
+        if not tools:
+            continue
+        lines.append(f"## {info['name']} (server: {key})")
+        for t in tools:
+            params_str = ", ".join(f"{k}: {v}" for k, v in t.get("params", {}).items())
+            lines.append(f"  - {t['name']}({params_str}) — {t.get('description', '')[:80]}")
+        lines.append("")
+
+    lines.append("## Skills composites")
+    for name, skill in SKILL_REGISTRY.items():
+        lines.append(f"  - SKILL:{name} — {skill['description']}")
+
+    catalog = "\n".join(lines)
+    _tool_catalog_cache = catalog
+    return catalog
 
 
-def _build_calendar_params() -> dict:
-    from datetime import datetime, timezone, timedelta
-    now = datetime.now(timezone(timedelta(hours=2)))
-    return {
-        "calendar_id": "primary",
-        "time_min": now.replace(hour=0, minute=0, second=0).isoformat(),
-        "time_max": (now + timedelta(days=7)).replace(hour=0, minute=0, second=0).isoformat(),
-        "max_results": 20,
-    }
+ROUTER_SYSTEM = """Tu es le Clone, agent productif du cockpit Stern OS.
+Ton utilisateur est un solopreneur Generator 4/1 (Human Design).
 
+Tu as accès à des OUTILS (MCP tools) et des SKILLS (compositions d'outils).
+Quand l'utilisateur demande quelque chose que tu peux résoudre avec un outil,
+tu dois répondre en JSON avec l'appel d'outil.
 
-GMAIL_PARAMS_PROMPT = """Tu reçois une question utilisateur concernant ses emails.
-Génère les paramètres pour l'API Gmail list_emails.
+RÈGLES :
+- Si la demande peut être résolue par un outil → appelle l'outil
+- Si la demande nécessite plusieurs outils → appelle SKILL:morning_brief ou enchaîne
+- Si la demande est une conversation normale → réponds normalement (pas de JSON)
+- Aujourd'hui : {today} (timezone Europe/Paris, +02:00)
 
-Paramètres disponibles :
-- query (string) : filtre Gmail (syntaxe Gmail search). Exemples :
-  "is:unread" — non lus
-  "from:jean@example.com" — emails de Jean
-  "subject:facture" — sujet contient facture
-  "after:2026/06/01 before:2026/06/04" — période
-  "has:attachment" — avec pièces jointes
-  "is:starred" — favoris
-  "label:important" — importants
-  Tu peux combiner : "from:google is:unread after:2026/06/01"
-- max_results (int) : nombre max de résultats (défaut: 10)
+FORMAT D'APPEL D'OUTIL — réponds UNIQUEMENT ce JSON si tu veux appeler un outil :
+{{"tool_call": {{"server": "nom-du-server", "tool": "nom_du_tool", "params": {{...}}}}}}
 
-Réponds UNIQUEMENT en JSON valide, rien d'autre :
-{"query": "...", "max_results": 10}"""
+FORMAT D'APPEL DE SKILL :
+{{"skill_call": "nom_du_skill"}}
 
-CALENDAR_PARAMS_PROMPT = """Tu reçois une question utilisateur concernant son agenda.
-Génère les paramètres pour l'API Google Calendar list_events.
+Si tu ne veux PAS appeler d'outil, réponds normalement en texte libre.
+Ne mets JAMAIS de JSON dans une réponse texte libre.
 
-Paramètres disponibles :
-- calendar_id (string) : "primary" par défaut
-- time_min (string) : date/heure début au format RFC3339 (ex: "2026-06-03T00:00:00+02:00")
-- time_max (string) : date/heure fin au format RFC3339
-- max_results (int) : nombre max (défaut: 20)
-- q (string) : recherche texte dans les events
-
-Aujourd'hui nous sommes le {today}. Timezone: Europe/Paris (+02:00).
-
-Réponds UNIQUEMENT en JSON valide, rien d'autre :
-{{"calendar_id": "primary", "time_min": "...", "time_max": "...", "max_results": 20}}"""
-
-
-async def _build_params_from_llm(tool: str, tool_name: str, user_message: str) -> dict:
-    """Use LLM to generate tool params from natural language."""
-    from datetime import datetime, timezone, timedelta
-    now = datetime.now(timezone(timedelta(hours=2)))
-
-    if tool == "gmail":
-        system = GMAIL_PARAMS_PROMPT
-    elif tool == "google-calendar":
-        system = CALENDAR_PARAMS_PROMPT.format(today=now.strftime("%A %d %B %Y"))
-    else:
-        return {}
-
-    try:
-        response = await litellm.acompletion(
-            model=MODEL,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user_message},
-            ],
-            max_tokens=200,
-        )
-        raw = response.choices[0].message.content.strip()
-        # Extract JSON from potential markdown wrapper
-        if "```" in raw:
-            raw = raw.split("```")[1].split("```")[0]
-            if raw.startswith("json"):
-                raw = raw[4:]
-        return json.loads(raw.strip())
-    except Exception as e:
-        logger.warning(f"LLM param generation failed: {e}")
-        # Fallback defaults
-        if tool == "gmail":
-            return {"query": "is:unread", "max_results": 10}
-        elif tool == "google-calendar":
-            return _build_calendar_params()
-        return {}
+{tool_catalog}"""
 
 
 async def clone_node(state: AgentState) -> dict:
-    """
-    Clone — ST-dominant producer with MCP tools.
-    1. Detect MCP intent in user message
-    2. If skill → run skill (e.g. morning_brief)
-    3. If tool → call MCP tool + LLM synthesize result
-    4. Else → standard LLM response
+    """Clone — POAIG: l'IA décide quels outils appeler.
+
+    Pas d'intents hardcodés. Le LLM voit le catalog de tools
+    et décide s'il doit appeler un outil ou répondre normalement.
+    La structure émerge (POEO), l'IA est l'agent (POAIG).
     """
     config = state.get("inversion_config", {})
-    system_prompt = config.get("clone_system_prompt", "Tu es un assistant productif.")
+    user_system_prompt = config.get("clone_system_prompt", "")
     context = state.get("context", "")
     last_message = state["messages"][-1].content if state["messages"] else ""
+    now = datetime.now(timezone(timedelta(hours=2)))
 
-    # Step 1: Check for MCP intent
-    intent = _detect_mcp_intent(last_message)
+    # Build tool catalog (cached after first call)
+    tool_catalog = await _get_tool_catalog()
 
-    if intent:
-        # Step 2: Skill execution
-        if "skill" in intent:
-            from app.services.skills import SKILL_REGISTRY
-            skill = SKILL_REGISTRY.get(intent["skill"])
+    # Step 1: Ask LLM — tool call or text response?
+    router_prompt = ROUTER_SYSTEM.format(
+        today=now.strftime("%A %d %B %Y, %Hh%M"),
+        tool_catalog=tool_catalog,
+    )
+
+    messages_for_router = [{"role": "system", "content": router_prompt}]
+    if user_system_prompt:
+        messages_for_router.append({"role": "system", "content": f"Personnalité:\n{user_system_prompt}"})
+    if context:
+        messages_for_router.append({"role": "system", "content": f"Contexte mémoire:\n{context}"})
+    for msg in state["messages"]:
+        role = "user" if msg.type == "human" else "assistant"
+        messages_for_router.append({"role": role, "content": msg.content})
+
+    try:
+        response = await litellm.acompletion(model=MODEL, messages=messages_for_router, max_tokens=2048)
+        raw_content = response.choices[0].message.content
+    except Exception as e:
+        logger.warning(f"Clone router failed ({MODEL}), fallback: {e}")
+        try:
+            response = await litellm.acompletion(model=FALLBACK_MODEL, messages=messages_for_router, max_tokens=2048)
+            raw_content = response.choices[0].message.content
+        except Exception as e2:
+            logger.error(f"Clone fallback also failed: {e2}")
+            return {"messages": [AIMessage(content="Erreur de connexion. Réessaie.")], "active_agent": "clone"}
+
+    # Step 2: Parse — is it a tool call or a text response?
+    stripped = raw_content.strip()
+
+    # Try to extract JSON (might be wrapped in markdown)
+    json_str = stripped
+    if "```json" in json_str:
+        json_str = json_str.split("```json")[1].split("```")[0]
+    elif "```" in json_str and "{" in json_str:
+        json_str = json_str.split("```")[1].split("```")[0]
+
+    try:
+        parsed = json.loads(json_str.strip())
+
+        # Skill call
+        if "skill_call" in parsed:
+            skill_name = parsed["skill_call"]
+            skill = SKILL_REGISTRY.get(skill_name)
             if skill:
-                try:
-                    result = await skill["fn"]()
-                    content = result.get("brief", json.dumps(result, ensure_ascii=False, indent=2))
-                    return {"messages": [AIMessage(content=content)], "active_agent": "clone"}
-                except Exception as e:
-                    logger.warning(f"Skill {intent['skill']} failed: {e}")
+                result = await skill["fn"]()
+                content = result.get("brief", json.dumps(result, ensure_ascii=False, indent=2))
+                return {"messages": [AIMessage(content=content)], "active_agent": "clone"}
 
-        # Step 3: Direct MCP tool call
-        elif "tool" in intent:
-            from app.services.mcp_client import MCPClient
+        # Tool call
+        if "tool_call" in parsed:
+            tc = parsed["tool_call"]
+            server = tc.get("server", "")
+            tool_name = tc.get("tool", "")
+            params = tc.get("params", {})
+
             mcp = MCPClient()
-            params = intent.get("params", {})
-            if intent.get("params_builder") == "_build_calendar_params":
-                params = _build_calendar_params()
-            elif intent.get("params_from_llm"):
-                params = await _build_params_from_llm(intent["tool"], intent["tool_name"], last_message)
-
-            result = await mcp.call(intent["tool"], intent["tool_name"], params)
+            result = await mcp.call(server, tool_name, params)
 
             if result.get("needs_auth"):
-                content = f"⚠️ {intent['tool']} n'est pas connecté. Connecte-le depuis la sidebar (bouton +) puis réessaie."
+                content = f"⚠️ **{server}** n'est pas connecté. Connecte-le depuis la sidebar (bouton +) puis réessaie."
                 return {"messages": [AIMessage(content=content)], "active_agent": "clone"}
 
             if result.get("status") == "ok":
                 raw = result.get("result", {}).get("content", [{}])
-                raw_text = raw[0].get("text", "") if raw else json.dumps(result.get("result", {}))
+                raw_text = raw[0].get("text", "") if raw else json.dumps(result.get("result", {}), ensure_ascii=False)
 
-                # LLM synthesizes the raw MCP data
+                # Synthesize
                 synth_messages = [
-                    {"role": "system", "content": f"{system_prompt}\n\nTu reçois des données brutes d'un outil ({intent['tool']}). Synthétise-les en français, de façon claire et actionnable. Sois concis."},
-                    {"role": "user", "content": f"Question originale : {last_message}\n\nDonnées brutes :\n{raw_text[:3000]}"},
+                    {"role": "system", "content": f"Tu es le Clone, agent productif. Synthétise ces données en français, de façon claire et actionnable. Sois concis. Aujourd'hui: {now.strftime('%A %d %B %Y')}."},
+                    {"role": "user", "content": f"Question: {last_message}\n\nDonnées brutes ({server}.{tool_name}):\n{raw_text[:3000]}"},
                 ]
                 try:
-                    response = await litellm.acompletion(model=MODEL, messages=synth_messages, max_tokens=1024)
-                    content = response.choices[0].message.content
+                    r2 = await litellm.acompletion(model=MODEL, messages=synth_messages, max_tokens=1024)
+                    content = r2.choices[0].message.content
                 except Exception:
                     content = raw_text[:2000]
-
                 return {"messages": [AIMessage(content=content)], "active_agent": "clone"}
             else:
-                content = f"Erreur MCP ({intent['tool']}): {result.get('error', result.get('detail', '?'))}"
+                content = f"Erreur {server}.{tool_name}: {result.get('error', '?')}"
                 return {"messages": [AIMessage(content=content)], "active_agent": "clone"}
 
-    # Step 4: Standard LLM response (no MCP intent detected)
-    messages_for_llm = [{"role": "system", "content": system_prompt}]
-    if context:
-        messages_for_llm.append({"role": "system", "content": f"Contexte mémoire:\n{context}"})
-    for msg in state["messages"]:
-        role = "user" if msg.type == "human" else "assistant"
-        messages_for_llm.append({"role": role, "content": msg.content})
+    except (json.JSONDecodeError, KeyError, TypeError):
+        pass  # Not JSON → it's a text response, use as-is
 
-    try:
-        response = await litellm.acompletion(model=MODEL, messages=messages_for_llm, max_tokens=2048)
-        content = response.choices[0].message.content
-    except Exception as e:
-        logger.warning(f"Clone model failed ({MODEL}), falling back: {e}")
-        try:
-            response = await litellm.acompletion(model=FALLBACK_MODEL, messages=messages_for_llm, max_tokens=2048)
-            content = response.choices[0].message.content
-        except Exception as e2:
-            logger.error(f"Clone fallback also failed: {e2}")
-            content = "Je n'ai pas pu générer de réponse. Réessaie dans un instant."
-
+    # Step 3: Text response (LLM decided no tool was needed)
     return {
-        "messages": [AIMessage(content=content)],
+        "messages": [AIMessage(content=raw_content)],
         "active_agent": "clone",
     }
