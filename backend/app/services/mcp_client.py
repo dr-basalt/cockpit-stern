@@ -233,6 +233,8 @@ class MCPClient:
                         "Mcp-Session-Id": session_id,
                     },
                 )
+                logger.info(f"MCP call response: status={r.status_code} content-type={r.headers.get('content-type')} body_len={len(r.text)} body_preview={r.text[:200]}")
+
                 if r.status_code == 400 and "session" in r.text.lower():
                     # Session expired, retry with fresh session
                     self._sessions.pop(tool_key, None)
@@ -256,12 +258,41 @@ class MCPClient:
                     )
 
                 if r.status_code < 400:
-                    result = r.json()
-                    return {"status": "ok", "tool": tool_name, "server": tool_key, "result": result}
+                    return self._parse_mcp_response(r, tool_name, tool_key)
                 return {"status": "error", "code": r.status_code, "detail": r.text}
         except Exception as e:
             logger.warning(f"MCP call failed: {e}")
             return {"error": str(e), "tool": tool_name, "server": tool_key}
+
+    def _parse_mcp_response(self, r, tool_name: str, tool_key: str) -> dict:
+        """Parse MCP response — handles both JSON and SSE (text/event-stream)."""
+        content_type = r.headers.get("content-type", "")
+
+        if "text/event-stream" in content_type:
+            # Parse SSE: extract JSON from "data: {...}" lines
+            import json
+            results = []
+            for line in r.text.split("\n"):
+                line = line.strip()
+                if line.startswith("data: "):
+                    try:
+                        data = json.loads(line[6:])
+                        results.append(data)
+                    except json.JSONDecodeError:
+                        pass
+            # Find the actual result (the one with "result" key)
+            for item in results:
+                if "result" in item:
+                    return {"status": "ok", "tool": tool_name, "server": tool_key, "result": item["result"]}
+            # Return all events if no clear result
+            return {"status": "ok", "tool": tool_name, "server": tool_key, "result": results}
+
+        # Standard JSON response
+        try:
+            result = r.json()
+            return {"status": "ok", "tool": tool_name, "server": tool_key, "result": result}
+        except Exception:
+            return {"status": "ok", "tool": tool_name, "server": tool_key, "result": r.text}
 
     def _dry_run(self, tool_key: str, tool_name: str, params: dict) -> dict:
         return {
