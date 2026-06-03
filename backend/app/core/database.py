@@ -14,11 +14,7 @@ class Base(DeclarativeBase):
 
 async def init_db():
     """Create pgvector extension and tables."""
-    # Import all models so Base.metadata knows about them
-    import app.models.profile  # noqa
-    import app.models.session  # noqa
-    import app.models.okr  # noqa
-    import app.models.design  # noqa
+    # Import models that need table creation
     import app.models.oauth_token  # noqa
 
     async with engine.begin() as conn:
