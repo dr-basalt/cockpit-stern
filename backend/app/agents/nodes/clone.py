@@ -56,23 +56,37 @@ ROUTER_SYSTEM = """Tu es le Clone, agent productif du cockpit Stern OS.
 Ton utilisateur est un solopreneur Generator 4/1 (Human Design).
 
 Tu as accès à des OUTILS (MCP tools) et des SKILLS (compositions d'outils).
-Quand l'utilisateur demande quelque chose que tu peux résoudre avec un outil,
-tu dois répondre en JSON avec l'appel d'outil.
+Aujourd'hui : {today} (timezone Europe/Paris, +02:00)
 
-RÈGLES :
-- Si la demande peut être résolue par un outil → appelle l'outil
-- Si la demande nécessite plusieurs outils → appelle SKILL:morning_brief ou enchaîne
-- Si la demande est une conversation normale → réponds normalement (pas de JSON)
-- Aujourd'hui : {today} (timezone Europe/Paris, +02:00)
+ÉTAPE 1 — CLASSIFIER l'intention de l'utilisateur.
+Réponds en JSON selon le type :
 
-FORMAT D'APPEL D'OUTIL — réponds UNIQUEMENT ce JSON si tu veux appeler un outil :
-{{"tool_call": {{"server": "nom-du-server", "tool": "nom_du_tool", "params": {{...}}}}}}
+TYPE "chat" — conversation, question de culture, réflexion :
+{{"type": "chat"}}
 
-FORMAT D'APPEL DE SKILL :
-{{"skill_call": "nom_du_skill"}}
+TYPE "action" — 1 seul outil suffit :
+{{"type": "action", "tool_call": {{"server": "nom", "tool": "nom_tool", "params": {{...}}}}}}
 
-Si tu ne veux PAS appeler d'outil, réponds normalement en texte libre.
-Ne mets JAMAIS de JSON dans une réponse texte libre.
+TYPE "skill" — composition connue :
+{{"type": "skill", "skill_call": "nom_du_skill"}}
+
+TYPE "plan" — demande complexe nécessitant PLUSIEURS outils en séquence :
+{{"type": "plan", "goal": "le but final en 1 phrase", "steps": [
+  {{"step": 1, "description": "ce que fait cette étape", "server": "nom", "tool": "nom_tool", "params": {{...}}, "depends_on": []}},
+  {{"step": 2, "description": "...", "server": "nom", "tool": "nom_tool", "params": {{...}}, "depends_on": [1]}},
+  ...
+]}}
+
+RÈGLES DE DÉCOMPOSITION (pour type "plan") :
+- Identifier le BUT (backward chaining : que veut l'user ?)
+- Décomposer en étapes ATOMIQUES (1 tool call par step)
+- Ordonner par DÉPENDANCE (RCE : exécuter les feuilles d'abord)
+- Chaque step qui dépend du résultat d'un step précédent → depends_on: [N]
+- Les steps sans dépendance PEUVENT s'exécuter en parallèle
+- Privilégier le CHEMIN LE PLUS COURT (efficience)
+- Ne pas inventer de tools qui n'existent pas dans le catalog
+
+Réponds UNIQUEMENT en JSON. Pas de texte avant ou après.
 
 {tool_catalog}"""
 
@@ -157,6 +171,11 @@ async def clone_node(state: AgentState) -> dict:
 
     try:
         parsed = json.loads(json_str.strip())
+        intent_type = parsed.get("type", "")
+
+        # Chat — no tool needed, ask LLM for a normal response
+        if intent_type == "chat":
+            raise json.JSONDecodeError("chat", "", 0)  # fall through to text response below
 
         # Skill call
         if "skill_call" in parsed:
@@ -200,11 +219,78 @@ async def clone_node(state: AgentState) -> dict:
                 content = f"Erreur {server}.{tool_name}: {result.get('error', '?')}"
                 return {"messages": [AIMessage(content=content)], "active_agent": "clone"}
 
-    except (json.JSONDecodeError, KeyError, TypeError):
-        pass  # Not JSON → it's a text response, use as-is
+        # Plan — multi-step pipeline execution
+        if intent_type == "plan" and "steps" in parsed:
+            mcp = MCPClient()
+            step_results = {}
+            steps = parsed["steps"]
+            goal = parsed.get("goal", "")
 
-    # Step 3: Text response (LLM decided no tool was needed)
+            for step in sorted(steps, key=lambda s: s.get("step", 0)):
+                step_num = step.get("step", 0)
+                deps = step.get("depends_on", [])
+
+                # Inject results from dependencies into params
+                params = step.get("params", {})
+                for dep in deps:
+                    if dep in step_results and isinstance(step_results[dep], str):
+                        params["_context_from_step_" + str(dep)] = step_results[dep][:500]
+
+                result = await mcp.call(
+                    step.get("server", ""),
+                    step.get("tool", ""),
+                    params,
+                )
+
+                if result.get("status") == "ok":
+                    raw = result.get("result", {}).get("content", [{}])
+                    step_results[step_num] = raw[0].get("text", "") if raw else json.dumps(result.get("result", {}))
+                elif result.get("needs_auth"):
+                    step_results[step_num] = f"[{step.get('server')} non connecté]"
+                else:
+                    step_results[step_num] = f"[Erreur: {result.get('error', '?')}]"
+
+            # Synthesize all step results
+            all_results = "\n\n".join(
+                f"## Étape {k} — {steps[k-1].get('description', '')}\n{v[:800]}"
+                for k, v in sorted(step_results.items())
+            )
+
+            synth_messages = [
+                {"role": "system", "content": f"Tu es le Clone. L'utilisateur a demandé : \"{last_message}\"\nBut identifié : {goal}\n\nTu as exécuté un plan en {len(steps)} étapes. Synthétise les résultats en une réponse claire, actionnable et concise en français. Aujourd'hui: {now.strftime('%A %d %B %Y')}."},
+                {"role": "user", "content": all_results[:4000]},
+            ]
+            try:
+                r2 = await litellm.acompletion(model=MODEL, messages=synth_messages, max_tokens=1024)
+                content = r2.choices[0].message.content
+            except Exception:
+                content = all_results[:2000]
+
+            return {"messages": [AIMessage(content=content)], "active_agent": "clone"}
+
+    except (json.JSONDecodeError, KeyError, TypeError):
+        pass  # Not JSON or chat type → text response
+
+    # Step 3: Text response (LLM decided no tool was needed, or type=chat)
+    # Re-ask LLM without the tool catalog for a clean conversational response
+    chat_messages = [{"role": "system", "content": user_system_prompt or "Tu es un assistant productif bienveillant. Réponds en français."}]
+    if context:
+        chat_messages.append({"role": "system", "content": f"Contexte mémoire:\n{context}"})
+    for msg in state["messages"]:
+        role = "user" if msg.type == "human" else "assistant"
+        chat_messages.append({"role": role, "content": msg.content})
+
+    try:
+        response = await litellm.acompletion(model=MODEL, messages=chat_messages, max_tokens=2048)
+        content = response.choices[0].message.content
+    except Exception:
+        try:
+            response = await litellm.acompletion(model=FALLBACK_MODEL, messages=chat_messages, max_tokens=2048)
+            content = response.choices[0].message.content
+        except Exception:
+            content = "Erreur de connexion. Réessaie."
+
     return {
-        "messages": [AIMessage(content=raw_content)],
+        "messages": [AIMessage(content=content)],
         "active_agent": "clone",
     }
