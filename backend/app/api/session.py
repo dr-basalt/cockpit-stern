@@ -135,6 +135,42 @@ async def mcp_introspect():
     return introspect_tools(tools_by_server)
 
 
+@router.get("/mcp/introspect/patterns")
+async def mcp_introspect_patterns():
+    """LLM-assisted pattern detection — apophénie contrôlée + raisonnement abductif.
+
+    Prend l'introspection mécanique et demande au LLM de découvrir :
+    - Compositions inédites cross-BC
+    - Aggregates virtuels émergents
+    - Workflows lifecycle BPMN
+    - Gaps compensables par d'autres BC
+    - Widgets UI émergents
+    """
+    from app.services.mcp_introspector import introspect_tools
+    from app.services.mcp_pattern_llm import detect_patterns_llm
+
+    # Step 1: mechanical introspection
+    tools_by_server: dict[str, list[dict]] = {}
+    for key, info in OBOT_MCP_SERVERS.items():
+        tools = await mcp.list_server_tools(info["catalog_id"])
+        if tools:
+            tools_by_server[key] = tools
+
+    if not tools_by_server:
+        return {"error": "No MCP servers with tools available"}
+
+    introspection = introspect_tools(tools_by_server)
+
+    # Step 2: LLM pattern detection
+    llm_result = await detect_patterns_llm(introspection)
+
+    return {
+        "mechanical": introspection["stats"],
+        "mechanical_skills": introspection["suggested_skills"],
+        **llm_result,
+    }
+
+
 @router.get("/obot/servers/{tool_key}/tools")
 async def list_server_tools(tool_key: str):
     """Agent runtime: list available tool functions for a specific MCP server."""
