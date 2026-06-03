@@ -133,16 +133,13 @@ class MCPClient:
             logger.warning(f"Obot connect URL failed: {e}")
         return None
 
-    # --- Tool Execution via MCP ---
+    # --- Tool Execution via remote MCP server ---
 
     async def call(self, tool_key: str, tool_name: str, params: dict, dry_run: bool = False) -> dict:
-        """Execute a tool on an Obot MCP server.
+        """Execute a tool on a remote MCP server using the stored OAuth token.
 
-        Args:
-            tool_key: The high-level key (e.g. "google-calendar")
-            tool_name: The specific tool function (e.g. "list_events")
-            params: Parameters for the tool
-            dry_run: If True, return what would happen without executing
+        The call goes directly to the public MCP server (*.obot.ai)
+        with the access_token obtained via the OAuth flow.
         """
         if dry_run:
             return self._dry_run(tool_key, tool_name, params)
@@ -151,22 +148,38 @@ class MCPClient:
         if not info:
             return {"error": f"Unknown tool: {tool_key}", "available_tools": list(OBOT_MCP_SERVERS.keys())}
 
+        # Get token from session store
+        from app.api.session import _oauth_tokens
+        token_data = _oauth_tokens.get(tool_key)
+        if not token_data:
+            return {
+                "error": f"Pas de token pour {tool_key}. L'utilisateur doit d'abord autoriser via /api/obot/connect/{tool_key}",
+                "needs_auth": True,
+                "tool": tool_key,
+            }
+
+        remote_url = info.get("remote_url")
+        if not remote_url:
+            return {"error": f"No remote URL for {tool_key}"}
+
         try:
             async with httpx.AsyncClient(timeout=30) as client:
-                # Call the MCP server via Obot's connect endpoint
-                connect_path = f"/mcp-connect/{info['catalog_id']}"
                 r = await client.post(
-                    f"{self.obot}{connect_path}",
+                    remote_url,
                     json={
                         "jsonrpc": "2.0",
                         "method": "tools/call",
                         "params": {"name": tool_name, "arguments": params},
                         "id": 1,
                     },
-                    headers={"Content-Type": "application/json"},
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {token_data['access_token']}",
+                    },
                 )
                 if r.status_code < 400:
-                    return {"status": "ok", "tool": tool_name, "server": tool_key, "result": r.json()}
+                    result = r.json()
+                    return {"status": "ok", "tool": tool_name, "server": tool_key, "result": result}
                 return {"status": "error", "code": r.status_code, "detail": r.text}
         except Exception as e:
             logger.warning(f"MCP call failed: {e}")
