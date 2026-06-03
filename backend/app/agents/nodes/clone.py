@@ -18,16 +18,16 @@ MCP_INTENTS = {
         "skill": "morning_brief",
     },
     "read_calendar": {
-        "patterns": ["agenda", "calendrier", "mes events", "mes rendez-vous", "mes rdv", "lis mon agenda", "mon emploi du temps", "cette semaine"],
+        "patterns": ["agenda", "calendrier", "mes events", "mes rendez-vous", "mes rdv", "lis mon agenda", "mon emploi du temps", "cette semaine", "demain", "jeudi", "lundi", "qu'est-ce que j'ai"],
         "tool": "google-calendar",
         "tool_name": "list_events",
-        "params_builder": "_build_calendar_params",
+        "params_from_llm": True,
     },
     "read_emails": {
-        "patterns": ["emails", "mails", "mes emails", "courrier", "inbox", "non lus", "derniers mails"],
+        "patterns": ["emails", "mails", "mes emails", "courrier", "inbox", "non lus", "derniers mails", "filtre", "cherche dans mes mails", "mail de"],
         "tool": "gmail",
         "tool_name": "list_emails",
-        "params": {"max_results": 5, "query": "is:unread"},
+        "params_from_llm": True,
     },
     "read_drive": {
         "patterns": ["mes fichiers", "google drive", "drive", "documents récents"],
@@ -56,6 +56,78 @@ def _build_calendar_params() -> dict:
         "time_max": (now + timedelta(days=7)).replace(hour=0, minute=0, second=0).isoformat(),
         "max_results": 20,
     }
+
+
+GMAIL_PARAMS_PROMPT = """Tu reçois une question utilisateur concernant ses emails.
+Génère les paramètres pour l'API Gmail list_emails.
+
+Paramètres disponibles :
+- query (string) : filtre Gmail (syntaxe Gmail search). Exemples :
+  "is:unread" — non lus
+  "from:jean@example.com" — emails de Jean
+  "subject:facture" — sujet contient facture
+  "after:2026/06/01 before:2026/06/04" — période
+  "has:attachment" — avec pièces jointes
+  "is:starred" — favoris
+  "label:important" — importants
+  Tu peux combiner : "from:google is:unread after:2026/06/01"
+- max_results (int) : nombre max de résultats (défaut: 10)
+
+Réponds UNIQUEMENT en JSON valide, rien d'autre :
+{"query": "...", "max_results": 10}"""
+
+CALENDAR_PARAMS_PROMPT = """Tu reçois une question utilisateur concernant son agenda.
+Génère les paramètres pour l'API Google Calendar list_events.
+
+Paramètres disponibles :
+- calendar_id (string) : "primary" par défaut
+- time_min (string) : date/heure début au format RFC3339 (ex: "2026-06-03T00:00:00+02:00")
+- time_max (string) : date/heure fin au format RFC3339
+- max_results (int) : nombre max (défaut: 20)
+- q (string) : recherche texte dans les events
+
+Aujourd'hui nous sommes le {today}. Timezone: Europe/Paris (+02:00).
+
+Réponds UNIQUEMENT en JSON valide, rien d'autre :
+{{"calendar_id": "primary", "time_min": "...", "time_max": "...", "max_results": 20}}"""
+
+
+async def _build_params_from_llm(tool: str, tool_name: str, user_message: str) -> dict:
+    """Use LLM to generate tool params from natural language."""
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone(timedelta(hours=2)))
+
+    if tool == "gmail":
+        system = GMAIL_PARAMS_PROMPT
+    elif tool == "google-calendar":
+        system = CALENDAR_PARAMS_PROMPT.format(today=now.strftime("%A %d %B %Y"))
+    else:
+        return {}
+
+    try:
+        response = await litellm.acompletion(
+            model=MODEL,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user_message},
+            ],
+            max_tokens=200,
+        )
+        raw = response.choices[0].message.content.strip()
+        # Extract JSON from potential markdown wrapper
+        if "```" in raw:
+            raw = raw.split("```")[1].split("```")[0]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        return json.loads(raw.strip())
+    except Exception as e:
+        logger.warning(f"LLM param generation failed: {e}")
+        # Fallback defaults
+        if tool == "gmail":
+            return {"query": "is:unread", "max_results": 10}
+        elif tool == "google-calendar":
+            return _build_calendar_params()
+        return {}
 
 
 async def clone_node(state: AgentState) -> dict:
@@ -94,6 +166,8 @@ async def clone_node(state: AgentState) -> dict:
             params = intent.get("params", {})
             if intent.get("params_builder") == "_build_calendar_params":
                 params = _build_calendar_params()
+            elif intent.get("params_from_llm"):
+                params = await _build_params_from_llm(intent["tool"], intent["tool_name"], last_message)
 
             result = await mcp.call(intent["tool"], intent["tool_name"], params)
 
