@@ -23,8 +23,8 @@ class Pipe:
 
     class Valves(BaseModel):
         STERN_API_URL: str = Field(
-            default="https://api-stern-os2.ori3com.cloud",
-            description="URL du backend Stern OS2",
+            default="https://api-stern-os.ori3com.cloud",
+            description="URL du backend Stern OS (prod=api-stern-os, dev=api-stern-os2)",
         )
         PROFILE_ID: str = Field(
             default="ec34c303-cdbf-496d-9f4c-17b4e0591146",
