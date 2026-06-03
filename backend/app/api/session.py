@@ -48,6 +48,22 @@ OBOT_URL = getattr(settings, "OBOT_URL", "http://obot:8080")
 mcp = MCPClient()
 
 
+INTEGRATION_META = {
+    "google-calendar": {"icon": "📅", "category": "Google"},
+    "gmail": {"icon": "📧", "category": "Google"},
+    "google-drive": {"icon": "📁", "category": "Google"},
+    "google-docs": {"icon": "📄", "category": "Google"},
+    "google-sheets": {"icon": "📊", "category": "Google"},
+    "slack": {"icon": "💬", "category": "Communication"},
+    "notion": {"icon": "📝", "category": "Productivity"},
+    "hubspot": {"icon": "🔶", "category": "CRM"},
+    "linear": {"icon": "🔷", "category": "Dev"},
+    "stripe": {"icon": "💳", "category": "Payment"},
+    "todoist": {"icon": "✅", "category": "Productivity"},
+    "outlook": {"icon": "📮", "category": "Microsoft"},
+}
+
+
 @router.get("/session/{profile_id}/integrations")
 async def list_integrations(profile_id: UUID):
     """List available MCP integrations via Obot (OAuth handled by Obot shared apps)."""
@@ -57,9 +73,10 @@ async def list_integrations(profile_id: UUID):
             {
                 "key": t["name"],
                 "name": t["display_name"],
+                "icon": INTEGRATION_META.get(t["name"], {}).get("icon", "🔌"),
+                "category": INTEGRATION_META.get(t["name"], {}).get("category", "Other"),
+                "connected": t["configured"],
                 "active": t["active"],
-                "configured": t["configured"],
-                "connect_url": t.get("connect_url", "").replace("http://localhost:8080", "https://obot-stern-os2.ori3com.cloud"),
             }
             for t in tools
         ]

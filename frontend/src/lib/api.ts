@@ -55,10 +55,10 @@ export async function getIntegrations(profileId: string) {
 }
 
 export async function connectIntegration(profileId: string, providerKey: string) {
-  const res = await fetch(`${API}/api/session/${profileId}/connect`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ provider_key: providerKey }),
-  });
-  return res.json();
+  // Use the new MCP OAuth flow via remote *.obot.ai servers (shared OAuth apps)
+  const res = await fetch(`${API}/api/obot/connect/${providerKey}`);
+  const data = await res.json();
+  // Remap connect_url → oauth_url for backwards compat with the UI
+  if (data.connect_url) data.oauth_url = data.connect_url;
+  return data;
 }
