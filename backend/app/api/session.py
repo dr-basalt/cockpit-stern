@@ -113,6 +113,28 @@ async def obot_discovery():
     }
 
 
+@router.get("/mcp/introspect")
+async def mcp_introspect():
+    """MCP Introspector — fait émerger le DDD depuis les MCP tools.
+
+    Introspects all connected MCP servers, extracts entities + SCRUDX,
+    detects cross-BC relations, identifies gaps, suggests compositions/skills.
+    """
+    from app.services.mcp_introspector import introspect_tools
+
+    # Fetch tools from all active MCP servers
+    tools_by_server: dict[str, list[dict]] = {}
+    for key, info in OBOT_MCP_SERVERS.items():
+        tools = await mcp.list_server_tools(info["catalog_id"])
+        if tools:
+            tools_by_server[key] = tools
+
+    if not tools_by_server:
+        return {"error": "No MCP servers with tools available"}
+
+    return introspect_tools(tools_by_server)
+
+
 @router.get("/obot/servers/{tool_key}/tools")
 async def list_server_tools(tool_key: str):
     """Agent runtime: list available tool functions for a specific MCP server."""
