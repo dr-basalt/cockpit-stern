@@ -7,138 +7,176 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+# Obot MCP catalog IDs → mapped to agent-friendly names
+OBOT_MCP_SERVERS = {
+    "google-calendar": {"catalog_id": "default-google-calendar-cd16928d", "name": "Google Calendar"},
+    "gmail": {"catalog_id": "default-gmail-8a99d8be", "name": "Gmail"},
+    "google-drive": {"catalog_id": "default-google-drive-4d983c77", "name": "Google Drive"},
+    "google-docs": {"catalog_id": "default-google-docs-2e59f122", "name": "Google Docs"},
+    "google-sheets": {"catalog_id": "default-google-sheets-68166c0a", "name": "Google Sheets"},
+    "slack": {"catalog_id": "default-slack-b73781ab", "name": "Slack"},
+    "notion": {"catalog_id": "default-notion-ae1c5d40", "name": "Notion"},
+    "hubspot": {"catalog_id": "default-hubspot-d7fcd7e1", "name": "HubSpot"},
+    "linear": {"catalog_id": "default-linear-2ad8f8d8", "name": "Linear"},
+    "stripe": {"catalog_id": "default-stripe-eab4c1f7", "name": "Stripe"},
+    "todoist": {"catalog_id": "default-todoist-77d6d2c9", "name": "Todoist"},
+    "outlook": {"catalog_id": "default-outlook-841b850d", "name": "Outlook"},
+}
+
 AGENT_TOOL_PERMISSIONS = {
-    "clone": {"access": "read_write", "tools": ["notion", "github", "google-calendar", "google-mail", "google-drive", "slack", "hubspot", "stripe-api-key", "linear"]},
-    "anti": {"access": "read_only", "tools": ["notion", "google-calendar", "hubspot", "linear"]},
-    "sp": {"access": "notify_only", "tools": ["slack", "google-mail"]},
+    "clone": {"access": "read_write", "tools": ["google-calendar", "gmail", "google-drive", "google-docs", "google-sheets", "slack", "notion", "hubspot", "linear", "stripe", "todoist"]},
+    "anti": {"access": "read_only", "tools": ["google-calendar", "notion", "hubspot", "linear", "todoist"]},
+    "sp": {"access": "notify_only", "tools": ["slack", "gmail"]},
     "real": {"access": "none", "tools": []},
 }
 
 
 class MCPClient:
-    """Adapter between LangGraph nodes and Nango (auth + proxy) + Obot (MCP gateway)."""
+    """Adapter between LangGraph agents and Obot MCP gateway.
 
-    def __init__(self, obot_url: str = "", nango_url: str = "", nango_secret: str = ""):
+    Obot manages OAuth (shared apps from obot.ai) + MCP tool execution.
+    No need for separate OAuth apps — Obot's catalog servers handle auth.
+    """
+
+    def __init__(self, obot_url: str = ""):
         self.obot = obot_url or getattr(settings, "OBOT_URL", "http://obot:8080")
-        self.nango = nango_url or getattr(settings, "NANGO_URL", "http://nango:3003")
-        self.nango_secret = nango_secret or getattr(settings, "NANGO_SECRET_KEY", "")
 
-    async def call(self, tool_name: str, profile_id: str, params: dict, dry_run: bool = False) -> dict:
-        token = await self._get_token(profile_id, tool_name)
-        if dry_run:
-            return await self._dry_run(tool_name, params, token)
-        return await self._execute(tool_name, params, token)
+    # --- Discovery ---
 
-    async def discover_tools(self, profile_id: str, agent: str = "clone") -> list[dict]:
-        """Discover available tools: merge Nango integrations + agent permissions."""
+    async def discover_tools(self, profile_id: str = "", agent: str = "clone") -> list[dict]:
+        """Discover available MCP tools from Obot, filtered by agent permissions."""
         perms = AGENT_TOOL_PERMISSIONS.get(agent, AGENT_TOOL_PERMISSIONS["clone"])
         tools = []
 
-        # Fetch Nango integrations to see what's actually configured
         try:
             async with httpx.AsyncClient(timeout=10) as client:
-                r = await client.get(f"{self.nango}/api/v1/integrations?env=dev")
+                r = await client.get(f"{self.obot}/api/mcp-servers")
                 if r.status_code == 200:
-                    integrations = r.json().get("data", [])
-                    for integ in integrations:
-                        provider = integ.get("provider", "")
-                        unique_key = integ.get("uniqueKey", provider)
-                        if unique_key in perms["tools"]:
-                            # Check if user has active connection
-                            connected = False
-                            if profile_id:
-                                connected = await self._check_connection(profile_id, unique_key)
-                            tools.append({
-                                "name": unique_key,
-                                "provider": provider,
-                                "display_name": integ.get("displayName", provider),
-                                "available": connected,
-                                "access": perms["access"],
-                                "mock": False,
-                            })
-                    # Add tools from permissions that aren't in Nango
-                    nango_keys = {t["name"] for t in tools}
-                    for t in perms["tools"]:
-                        if t not in nango_keys:
-                            tools.append({"name": t, "available": False, "mock": True, "access": perms["access"]})
+                    servers = r.json().get("items", [])
+                    active_catalogs = {s.get("catalogEntryID", ""): s for s in servers}
+
+                    for key, info in OBOT_MCP_SERVERS.items():
+                        server = active_catalogs.get(info["catalog_id"])
+                        is_active = server is not None
+                        is_configured = server.get("configured", False) if server else False
+                        is_permitted = key in perms["tools"]
+
+                        tools.append({
+                            "name": key,
+                            "display_name": info["name"],
+                            "catalog_id": info["catalog_id"],
+                            "active": is_active,
+                            "configured": is_configured,
+                            "permitted": is_permitted,
+                            "access": perms["access"] if is_permitted else "none",
+                            "connect_url": server.get("connectURL", "") if server else "",
+                        })
+
                     return tools
         except Exception as e:
-            logger.warning(f"Nango discovery failed: {e}")
+            logger.warning(f"Obot discovery failed: {e}")
 
-        return [{"name": t, "available": False, "mock": True, "access": perms["access"]} for t in perms["tools"]]
+        # Fallback: return static list
+        return [
+            {
+                "name": key,
+                "display_name": info["name"],
+                "active": False,
+                "configured": False,
+                "permitted": key in perms["tools"],
+                "access": perms["access"] if key in perms["tools"] else "none",
+            }
+            for key, info in OBOT_MCP_SERVERS.items()
+        ]
 
-    async def _check_connection(self, profile_id: str, provider_key: str) -> bool:
-        """Check if a user has an active connection for a provider."""
+    async def list_server_tools(self, catalog_id: str) -> list[dict]:
+        """List available tools (functions) for a specific MCP server."""
         try:
-            async with httpx.AsyncClient(timeout=5) as client:
-                r = await client.get(
-                    f"{self.nango}/api/v1/connections?env=dev",
-                    params={"connectionId": profile_id},
-                )
+            async with httpx.AsyncClient(timeout=10) as client:
+                r = await client.get(f"{self.obot}/api/mcp-servers")
                 if r.status_code == 200:
-                    connections = r.json().get("data", r.json().get("connections", []))
-                    return any(c.get("provider_config_key") == provider_key for c in connections)
-        except Exception:
-            pass
-        return False
-
-    async def _get_token(self, profile_id: str, tool_name: str) -> str | None:
-        """Fetch OAuth token from Nango for a specific connection."""
-        try:
-            async with httpx.AsyncClient(timeout=5) as client:
-                r = await client.get(
-                    f"{self.nango}/api/v1/connections/{profile_id}?env=dev",
-                    params={"provider_config_key": tool_name},
-                )
-                if r.status_code == 200:
-                    return r.json().get("credentials", {}).get("access_token")
+                    servers = r.json().get("items", [])
+                    for s in servers:
+                        if s.get("catalogEntryID") == catalog_id:
+                            previews = s.get("manifest", {}).get("toolPreview", [])
+                            return [
+                                {"name": t["name"], "description": t.get("description", ""), "params": t.get("params", {})}
+                                for t in previews
+                            ]
         except Exception as e:
-            logger.debug(f"Nango token fetch failed: {e}")
+            logger.warning(f"Obot tool list failed: {e}")
+        return []
+
+    # --- OAuth Connect ---
+
+    async def get_connect_url(self, tool_key: str) -> str | None:
+        """Get the OAuth connect URL for a tool. User opens this in browser to authorize."""
+        info = OBOT_MCP_SERVERS.get(tool_key)
+        if not info:
+            return None
+
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                r = await client.get(f"{self.obot}/api/mcp-servers")
+                if r.status_code == 200:
+                    servers = r.json().get("items", [])
+                    for s in servers:
+                        if s.get("catalogEntryID") == info["catalog_id"]:
+                            connect = s.get("connectURL", "")
+                            if connect:
+                                # Convert internal URL to external
+                                return connect.replace(
+                                    "http://localhost:8080",
+                                    "https://obot-stern-os2.ori3com.cloud"
+                                )
+        except Exception as e:
+            logger.warning(f"Obot connect URL failed: {e}")
         return None
 
-    async def nango_proxy(self, profile_id: str, provider_key: str, method: str, endpoint: str, data: dict | None = None) -> dict:
-        """Use Nango's proxy to call external APIs with managed credentials.
+    # --- Tool Execution via MCP ---
 
-        This is the key capability: the agent doesn't need tokens — Nango injects
-        them automatically via its proxy.
+    async def call(self, tool_key: str, tool_name: str, params: dict, dry_run: bool = False) -> dict:
+        """Execute a tool on an Obot MCP server.
+
+        Args:
+            tool_key: The high-level key (e.g. "google-calendar")
+            tool_name: The specific tool function (e.g. "list_events")
+            params: Parameters for the tool
+            dry_run: If True, return what would happen without executing
         """
+        if dry_run:
+            return self._dry_run(tool_key, tool_name, params)
+
+        info = OBOT_MCP_SERVERS.get(tool_key)
+        if not info:
+            return {"error": f"Unknown tool: {tool_key}", "available_tools": list(OBOT_MCP_SERVERS.keys())}
+
         try:
             async with httpx.AsyncClient(timeout=30) as client:
-                headers = {
-                    "Connection-Id": profile_id,
-                    "Provider-Config-Key": provider_key,
-                }
-                r = await client.request(
-                    method=method,
-                    url=f"{self.nango}/proxy{endpoint}",
-                    headers=headers,
-                    json=data,
+                # Call the MCP server via Obot's connect endpoint
+                connect_path = f"/mcp-connect/{info['catalog_id']}"
+                r = await client.post(
+                    f"{self.obot}{connect_path}",
+                    json={
+                        "jsonrpc": "2.0",
+                        "method": "tools/call",
+                        "params": {"name": tool_name, "arguments": params},
+                        "id": 1,
+                    },
+                    headers={"Content-Type": "application/json"},
                 )
                 if r.status_code < 400:
-                    return {"status": "ok", "data": r.json()}
+                    return {"status": "ok", "tool": tool_name, "server": tool_key, "result": r.json()}
                 return {"status": "error", "code": r.status_code, "detail": r.text}
         except Exception as e:
-            logger.warning(f"Nango proxy call failed: {e}")
-            return {"status": "error", "error": str(e)}
+            logger.warning(f"MCP call failed: {e}")
+            return {"error": str(e), "tool": tool_name, "server": tool_key}
 
-    async def _execute(self, tool_name: str, params: dict, token: str | None) -> dict:
-        try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                r = await client.post(
-                    f"{self.obot}/api/v1/tools/{tool_name}/execute",
-                    json={"params": params, "token": token},
-                )
-                return r.json()
-        except Exception as e:
-            logger.warning(f"MCP execute failed: {e}")
-            return {"error": str(e), "mock": True, "tool": tool_name, "params": params}
-
-    async def _dry_run(self, tool_name: str, params: dict, token: str | None) -> dict:
+    def _dry_run(self, tool_key: str, tool_name: str, params: dict) -> dict:
         return {
             "action": tool_name,
-            "target": params.get("target", "unknown"),
-            "content_before": None,
-            "content_after": params.get("content", ""),
-            "risk_level": "low" if tool_name.endswith("_read") else "medium",
+            "server": tool_key,
+            "params": params,
+            "risk_level": "low" if "list" in tool_name or "get" in tool_name else "medium",
             "dry_run": True,
         }
