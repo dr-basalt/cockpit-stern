@@ -104,15 +104,94 @@ async def list_server_tools(tool_key: str):
 
 @router.get("/obot/connect/{tool_key}")
 async def get_connect_link(tool_key: str):
-    """Agent runtime: get OAuth connect URL for a tool. Send to user via email/slack."""
-    url = await mcp.get_connect_url(tool_key)
-    if url:
-        return {
-            "connect_url": url,
-            "provider": tool_key,
-            "instruction": f"Ouvre ce lien pour connecter {OBOT_MCP_SERVERS.get(tool_key, {}).get('name', tool_key)}. L'OAuth est geree par Obot (pas d'app a creer).",
-        }
-    return {"error": f"No connect URL for {tool_key}"}
+    """Generate a direct OAuth URL via the remote MCP server (*.obot.ai).
+
+    This bypasses the local Obot instance entirely — the remote MCP server
+    handles OAuth with its own shared Google/Slack/etc apps.
+    The user opens this URL in their browser → authorizes → callback comes back here.
+    """
+    import secrets
+    import hashlib
+    import base64
+
+    info = OBOT_MCP_SERVERS.get(tool_key)
+    if not info or "auth_server" not in info:
+        return {"error": f"Unknown or unsupported tool: {tool_key}"}
+
+    auth_server = info["auth_server"]
+    callback_url = "https://api-stern-os2.ori3com.cloud/mcp/callback"
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            # Step 1: Get authorization server metadata
+            r = await client.get(f"{auth_server}/.well-known/oauth-authorization-server")
+            if r.status_code != 200:
+                return {"error": f"Auth server metadata failed: {r.status_code}", "detail": r.text}
+            auth_meta = r.json()
+
+            # Step 2: Dynamic client registration (RFC 7591)
+            reg_endpoint = auth_meta.get("registration_endpoint")
+            if not reg_endpoint:
+                return {"error": "No registration endpoint in auth metadata"}
+
+            r2 = await client.post(reg_endpoint, json={
+                "redirect_uris": [callback_url],
+                "client_name": "Stern OS2",
+                "token_endpoint_auth_method": "client_secret_post",
+            })
+            if r2.status_code not in (200, 201):
+                return {"error": f"Client registration failed: {r2.status_code}", "detail": r2.text}
+            reg = r2.json()
+
+            # Step 3: Build PKCE challenge
+            code_verifier = secrets.token_urlsafe(32)
+            code_challenge = base64.urlsafe_b64encode(
+                hashlib.sha256(code_verifier.encode()).digest()
+            ).rstrip(b"=").decode()
+
+            # Step 4: Build authorization URL
+            scopes = " ".join(auth_meta.get("scopes_supported", ["profile"]))
+            state_data = f"{tool_key}:{code_verifier}"
+            # Encode state so we can recover tool_key + verifier on callback
+            state = base64.urlsafe_b64encode(state_data.encode()).decode()
+
+            auth_url = (
+                f"{auth_meta['authorization_endpoint']}"
+                f"?response_type=code"
+                f"&client_id={reg['client_id']}"
+                f"&redirect_uri={callback_url}"
+                f"&state={state}"
+                f"&code_challenge={code_challenge}"
+                f"&code_challenge_method=S256"
+                f"&scope={scopes}"
+            )
+
+            # Store client credentials in memory for callback exchange
+            # In production, use Redis or DB
+            _pending_oauth[state] = {
+                "tool_key": tool_key,
+                "client_id": reg["client_id"],
+                "client_secret": reg["client_secret"],
+                "code_verifier": code_verifier,
+                "token_endpoint": auth_meta["token_endpoint"],
+                "redirect_uri": callback_url,
+            }
+
+            return {
+                "connect_url": auth_url,
+                "provider": tool_key,
+                "display_name": info["name"],
+                "instruction": f"Ouvre ce lien pour connecter {info['name']}. L'OAuth est geree par le MCP server distant (zero app a creer).",
+            }
+    except Exception as e:
+        logger.error(f"OAuth connect failed for {tool_key}: {e}")
+        return {"error": str(e)}
+
+
+# In-memory store for pending OAuth flows (use Redis in production)
+_pending_oauth: dict[str, dict] = {}
+# Store tokens after successful OAuth
+_oauth_tokens: dict[str, dict] = {}
 
 
 class ToolCallRequest(BaseModel):

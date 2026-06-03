@@ -54,7 +54,7 @@ async def health():
     return {"status": "ok", "environment": settings.ENVIRONMENT}
 
 
-# OAuth callback proxy — routes through our trusted domain to avoid Safe Browsing flags
+# Legacy OAuth callback proxy for Nango
 @app.get("/oauth/callback")
 async def oauth_callback_proxy(request: Request):
     """Proxy OAuth callbacks to Nango via our trusted domain."""
@@ -71,6 +71,77 @@ async def oauth_callback_proxy(request: Request):
             return RedirectResponse(url=r.headers.get("location", "/cockpit"))
         from fastapi.responses import Response
         return Response(content=r.content, status_code=r.status_code, headers=dict(r.headers))
+
+
+# MCP OAuth callback — handles the code exchange after user authorizes
+@app.get("/mcp/callback")
+async def mcp_oauth_callback(request: Request):
+    """Handle OAuth callback from remote MCP servers (*.obot.ai).
+
+    Flow: User authorized on Google/Slack/etc → redirected here with ?code=...&state=...
+    We exchange the code for an access token via the MCP server's token endpoint.
+    """
+    import httpx
+    import base64
+    from fastapi.responses import HTMLResponse
+
+    code = request.query_params.get("code")
+    state = request.query_params.get("state")
+    error = request.query_params.get("error")
+
+    if error:
+        return HTMLResponse(f"<h2>Erreur OAuth</h2><p>{error}: {request.query_params.get('error_description', '')}</p>")
+
+    if not code or not state:
+        return HTMLResponse("<h2>Erreur</h2><p>Parametres manquants (code ou state)</p>")
+
+    # Retrieve pending OAuth data
+    from app.api.session import _pending_oauth, _oauth_tokens
+    pending = _pending_oauth.pop(state, None)
+    if not pending:
+        return HTMLResponse("<h2>Erreur</h2><p>Session OAuth expiree ou inconnue. Relance la connexion.</p>")
+
+    # Exchange code for token
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.post(
+                pending["token_endpoint"],
+                data={
+                    "grant_type": "authorization_code",
+                    "code": code,
+                    "redirect_uri": pending["redirect_uri"],
+                    "client_id": pending["client_id"],
+                    "client_secret": pending["client_secret"],
+                    "code_verifier": pending["code_verifier"],
+                },
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+
+            if r.status_code != 200:
+                return HTMLResponse(f"<h2>Erreur token exchange</h2><pre>{r.text}</pre>")
+
+            token_data = r.json()
+            tool_key = pending["tool_key"]
+
+            # Store token
+            _oauth_tokens[tool_key] = {
+                "access_token": token_data.get("access_token"),
+                "refresh_token": token_data.get("refresh_token"),
+                "token_type": token_data.get("token_type"),
+                "expires_in": token_data.get("expires_in"),
+                "tool_key": tool_key,
+            }
+
+            return HTMLResponse(f"""
+            <html><body style="font-family:system-ui;max-width:600px;margin:40px auto;text-align:center">
+                <h2 style="color:#1D9E75">Connexion reussie !</h2>
+                <p><strong>{tool_key}</strong> est maintenant connecte a Stern OS2.</p>
+                <p>Tu peux fermer cet onglet.</p>
+                <p style="color:#888;font-size:12px">Token expire dans {token_data.get('expires_in', '?')}s</p>
+            </body></html>
+            """)
+    except Exception as e:
+        return HTMLResponse(f"<h2>Erreur</h2><pre>{e}</pre>")
 
 
 # Obot proxy — expose internal Obot (http://obot:8080) via api-stern-os2.ori3com.cloud/obot/

@@ -7,20 +7,20 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Obot MCP catalog IDs → mapped to agent-friendly names
+# Obot MCP catalog IDs + remote public URLs (*.obot.ai handle OAuth)
 OBOT_MCP_SERVERS = {
-    "google-calendar": {"catalog_id": "default-google-calendar-cd16928d", "name": "Google Calendar"},
-    "gmail": {"catalog_id": "default-gmail-8a99d8be", "name": "Gmail"},
-    "google-drive": {"catalog_id": "default-google-drive-4d983c77", "name": "Google Drive"},
-    "google-docs": {"catalog_id": "default-google-docs-2e59f122", "name": "Google Docs"},
-    "google-sheets": {"catalog_id": "default-google-sheets-68166c0a", "name": "Google Sheets"},
-    "slack": {"catalog_id": "default-slack-b73781ab", "name": "Slack"},
-    "notion": {"catalog_id": "default-notion-ae1c5d40", "name": "Notion"},
-    "hubspot": {"catalog_id": "default-hubspot-d7fcd7e1", "name": "HubSpot"},
-    "linear": {"catalog_id": "default-linear-2ad8f8d8", "name": "Linear"},
-    "stripe": {"catalog_id": "default-stripe-eab4c1f7", "name": "Stripe"},
-    "todoist": {"catalog_id": "default-todoist-77d6d2c9", "name": "Todoist"},
-    "outlook": {"catalog_id": "default-outlook-841b850d", "name": "Outlook"},
+    "google-calendar": {"catalog_id": "default-google-calendar-cd16928d", "name": "Google Calendar", "remote_url": "https://google-calendar-mcp.obot.ai/mcp/", "auth_server": "https://google-calendar-mcp.obot.ai"},
+    "gmail": {"catalog_id": "default-gmail-8a99d8be", "name": "Gmail", "remote_url": "https://gmail-mcp.obot.ai/mcp", "auth_server": "https://gmail-mcp.obot.ai"},
+    "google-drive": {"catalog_id": "default-google-drive-4d983c77", "name": "Google Drive", "remote_url": "https://google-drive-mcp.obot.ai/mcp/", "auth_server": "https://google-drive-mcp.obot.ai"},
+    "google-docs": {"catalog_id": "default-google-docs-2e59f122", "name": "Google Docs", "remote_url": "https://google-docs-mcp.obot.ai/mcp/", "auth_server": "https://google-docs-mcp.obot.ai"},
+    "google-sheets": {"catalog_id": "default-google-sheets-68166c0a", "name": "Google Sheets", "remote_url": "https://google-sheets-mcp.obot.ai/mcp/", "auth_server": "https://google-sheets-mcp.obot.ai"},
+    "slack": {"catalog_id": "default-slack-b73781ab", "name": "Slack", "remote_url": "https://slack-mcp.obot.ai/mcp", "auth_server": "https://slack-mcp.obot.ai"},
+    "notion": {"catalog_id": "default-notion-ae1c5d40", "name": "Notion", "remote_url": "https://mcp.notion.com/mcp", "auth_server": "https://mcp.notion.com"},
+    "hubspot": {"catalog_id": "default-hubspot-d7fcd7e1", "name": "HubSpot", "remote_url": "https://hubspot-mcp.obot.ai/mcp", "auth_server": "https://hubspot-mcp.obot.ai"},
+    "linear": {"catalog_id": "default-linear-2ad8f8d8", "name": "Linear", "remote_url": "https://mcp.linear.app/mcp", "auth_server": "https://mcp.linear.app"},
+    "stripe": {"catalog_id": "default-stripe-eab4c1f7", "name": "Stripe", "remote_url": "https://mcp.stripe.com", "auth_server": "https://mcp.stripe.com"},
+    "todoist": {"catalog_id": "default-todoist-77d6d2c9", "name": "Todoist", "remote_url": "https://ai.todoist.net/mcp", "auth_server": "https://ai.todoist.net"},
+    "outlook": {"catalog_id": "default-outlook-841b850d", "name": "Outlook", "remote_url": "https://outlook-mcp.obot.ai/mcp", "auth_server": "https://outlook-mcp.obot.ai"},
 }
 
 AGENT_TOOL_PERMISSIONS = {
