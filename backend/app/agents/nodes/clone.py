@@ -130,6 +130,31 @@ async def clone_node(state: AgentState) -> dict:
     elif "```" in json_str and "{" in json_str:
         json_str = json_str.split("```")[1].split("```")[0]
 
+    # Also try to find JSON embedded in text
+    if "{" in json_str and "tool_call" in json_str:
+        start = json_str.index("{")
+        # Find matching closing brace
+        depth = 0
+        for i in range(start, len(json_str)):
+            if json_str[i] == "{":
+                depth += 1
+            elif json_str[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    json_str = json_str[start:i + 1]
+                    break
+    elif "{" in json_str and "skill_call" in json_str:
+        start = json_str.index("{")
+        depth = 0
+        for i in range(start, len(json_str)):
+            if json_str[i] == "{":
+                depth += 1
+            elif json_str[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    json_str = json_str[start:i + 1]
+                    break
+
     try:
         parsed = json.loads(json_str.strip())
 
