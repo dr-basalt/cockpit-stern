@@ -139,8 +139,7 @@ services:
 
   backend-prod:
     build:
-      context: /opt/cockpit-stern
-      dockerfile: backend/Dockerfile
+      context: /opt/cockpit-stern/backend
     environment:
       DATABASE_URL: postgresql+asyncpg://cockpit:${POSTGRES_PASSWORD:-cockpitstern2026}@postgres:5432/cockpit
       REDIS_URL: redis://redis:6379/0
@@ -171,8 +170,7 @@ services:
 
   frontend-prod:
     build:
-      context: /opt/cockpit-stern
-      dockerfile: frontend/Dockerfile
+      context: /opt/cockpit-stern/frontend
     environment:
       NEXT_PUBLIC_API_URL: https://api-stern-os.ori3com.cloud
     depends_on:
@@ -189,8 +187,7 @@ services:
 
   backend-dev:
     build:
-      context: /opt/cockpit-stern-dev
-      dockerfile: backend/Dockerfile
+      context: /opt/cockpit-stern-dev/backend
     environment:
       DATABASE_URL: postgresql+asyncpg://cockpit:${POSTGRES_PASSWORD:-cockpitstern2026}@postgres:5432/cockpit_dev
       REDIS_URL: redis://redis:6379/1
@@ -221,8 +218,7 @@ services:
 
   frontend-dev:
     build:
-      context: /opt/cockpit-stern-dev
-      dockerfile: frontend/Dockerfile
+      context: /opt/cockpit-stern-dev/frontend
     environment:
       NEXT_PUBLIC_API_URL: https://api-stern-os2.ori3com.cloud
     depends_on:
