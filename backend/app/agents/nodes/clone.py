@@ -161,12 +161,36 @@ async def _generate_connect_url(tool_key: str) -> str | None:
         return None
 
 
+# Keywords that hint at tool/data usage — if NONE present, skip catalog (fast path)
+TOOL_HINTS = [
+    "mail", "email", "gmail", "inbox", "courrier",
+    "agenda", "calendrier", "event", "rdv", "rendez-vous", "meeting", "demain", "semaine",
+    "fichier", "drive", "document", "doc", "sheet",
+    "notion", "page", "base de données",
+    "slack", "message", "channel",
+    "linear", "issue", "ticket", "bug",
+    "stripe", "paiement", "facture", "invoice",
+    "todoist", "tâche", "task", "todo",
+    "outlook",
+    "briefing", "brief", "morning",
+    "crée", "envoie", "supprime", "modifie", "planifie", "organise",
+    "connecte", "connecter",
+    "lis", "montre", "affiche", "cherche", "filtre", "trouve",
+]
+
+
+def _needs_tools(message: str) -> bool:
+    """Fast pre-filter: does this message likely need MCP tools?"""
+    msg = message.lower()
+    return any(hint in msg for hint in TOOL_HINTS)
+
+
 async def clone_node(state: AgentState) -> dict:
     """Clone — POAIG: l'IA décide quels outils appeler.
 
-    Pas d'intents hardcodés. Le LLM voit le catalog de tools
-    et décide s'il doit appeler un outil ou répondre normalement.
-    La structure émerge (POEO), l'IA est l'agent (POAIG).
+    FAST PATH: si le message est conversationnel (pas de tool hints),
+    on skippe le catalog et on répond directement via LLM.
+    TOOL PATH: sinon, on charge le catalog et le LLM classifie.
     """
     config = state.get("inversion_config", {})
     user_system_prompt = config.get("clone_system_prompt", "")
@@ -174,10 +198,29 @@ async def clone_node(state: AgentState) -> dict:
     last_message = state["messages"][-1].content if state["messages"] else ""
     now = datetime.now(timezone(timedelta(hours=2)))
 
-    # Build tool catalog (cached after first call)
+    # FAST PATH — conversational, no tools needed
+    if not _needs_tools(last_message):
+        chat_messages = [{"role": "system", "content": user_system_prompt or "Tu es le Clone, agent productif du cockpit Stern OS. Réponds en français, sois concis et bienveillant. Ton utilisateur est un Generator 4/1 (Human Design)."}]
+        if context:
+            chat_messages.append({"role": "system", "content": f"Contexte mémoire:\n{context}"})
+        for msg in state["messages"]:
+            role = "user" if msg.type == "human" else "assistant"
+            chat_messages.append({"role": role, "content": msg.content})
+
+        try:
+            response = await litellm.acompletion(model=MODEL, messages=chat_messages, max_tokens=1024)
+            content = response.choices[0].message.content
+        except Exception:
+            try:
+                response = await litellm.acompletion(model=FALLBACK_MODEL, messages=chat_messages, max_tokens=1024)
+                content = response.choices[0].message.content
+            except Exception:
+                content = "Erreur de connexion. Réessaie."
+        return {"messages": [AIMessage(content=content)], "active_agent": "clone"}
+
+    # TOOL PATH — load catalog, classify intent
     tool_catalog = await _get_tool_catalog()
 
-    # Step 1: Ask LLM — tool call or text response?
     router_prompt = ROUTER_SYSTEM.format(
         today=now.strftime("%A %d %B %Y, %Hh%M"),
         tool_catalog=tool_catalog,

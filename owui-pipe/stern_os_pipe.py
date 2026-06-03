@@ -55,8 +55,8 @@ class Pipe:
             },
         ]
 
-    async def pipe(self, body: dict, __user__: dict = None) -> str:
-        """Route OWUI messages vers Stern OS2 backend."""
+    async def pipe(self, body: dict, __user__: dict = None):
+        """Route OWUI messages vers Stern OS2 backend. Returns streaming."""
         model_id = body.get("model", "").split(".")[-1] if "." in body.get("model", "") else body.get("model", "")
         messages = body.get("messages", [])
         last_message = messages[-1].get("content", "") if messages else ""
@@ -66,15 +66,19 @@ class Pipe:
 
         # Morning brief shortcut
         if model_id == "stern-morning-brief":
-            return await self._run_skill("morning_brief")
+            result = await self._run_skill("morning_brief")
+            return result
 
-        # Standard chat via LangGraph
-        return await self._chat(last_message)
+        # Standard chat via LangGraph — stream the response word by word
+        full_response = await self._chat_raw(last_message)
+        if body.get("stream", False):
+            return self._stream_response(full_response)
+        return full_response
 
-    async def _chat(self, message: str) -> str:
-        """Call Stern OS2 /api/chat — LangGraph routing."""
+    async def _chat_raw(self, message: str) -> str:
+        """Call Stern OS2 /api/chat — LangGraph routing. Returns formatted string."""
         try:
-            async with httpx.AsyncClient(timeout=60) as client:
+            async with httpx.AsyncClient(timeout=90) as client:
                 r = await client.post(
                     f"{self.valves.STERN_API_URL}/api/chat",
                     json={
@@ -95,7 +99,6 @@ class Pipe:
                 response = data.get("message", "")
                 not_self = data.get("not_self_detected", False)
 
-                # Build header with agent metadata
                 header = f"**[{agent.upper()}]** · {energy_mode} · {task_type}"
                 if not_self:
                     header += " · ⚠️ not-self détecté"
@@ -103,9 +106,21 @@ class Pipe:
                 return f"{header}\n\n{response}"
 
         except httpx.TimeoutException:
-            return "⏱️ Stern OS2 a mis trop de temps à répondre (timeout 60s). La requête impliquait peut-être un plan multi-step complexe."
+            return "⏱️ Timeout (90s). Demande peut-être trop complexe — essaie en plus simple."
         except Exception as e:
-            return f"Erreur de connexion à Stern OS2: {e}"
+            return f"Erreur: {e}"
+
+    async def _stream_response(self, text: str):
+        """Simulate streaming by yielding chunks of text."""
+        import asyncio
+        # Yield in sentence-sized chunks for natural reading
+        chunks = text.split("\n")
+        for i, chunk in enumerate(chunks):
+            if chunk.strip():
+                yield chunk
+                if i < len(chunks) - 1:
+                    yield "\n"
+                await asyncio.sleep(0.02)  # small delay for streaming feel
 
     async def _run_skill(self, skill_name: str) -> str:
         """Execute a Stern OS2 skill directly."""
