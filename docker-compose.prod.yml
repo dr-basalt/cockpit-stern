@@ -129,7 +129,7 @@ services:
   obot:
     image: ghcr.io/obot-platform/obot:latest
     environment:
-      OBOT_SERVER_URL: http://obot:8080
+      OBOT_SERVER_URL: https://obot-stern-os2.ori3com.cloud
       OBOT_SERVER_DSN: postgresql://cockpit:${POSTGRES_PASSWORD:-cockpitstern2026}@postgres:5432/obot?sslmode=disable
       OPENAI_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENAI_BASE_URL: https://openrouter.ai/api/v1
