@@ -196,8 +196,8 @@ class MCPClient:
         if not info:
             return {"error": f"Unknown tool: {tool_key}", "available_tools": list(OBOT_MCP_SERVERS.keys())}
 
-        from app.api.session import _oauth_tokens
-        token_data = _oauth_tokens.get(tool_key)
+        from app.services.token_store import token_store
+        token_data = await token_store.get(tool_key)
         if not token_data:
             return {
                 "error": f"Pas de token pour {tool_key}. L'utilisateur doit d'abord autoriser via /api/obot/connect/{tool_key}",

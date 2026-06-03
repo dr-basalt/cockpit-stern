@@ -47,9 +47,10 @@ from app.services.mcp_client import MCPClient, OBOT_MCP_SERVERS
 OBOT_URL = getattr(settings, "OBOT_URL", "http://obot:8080")
 mcp = MCPClient()
 
-# In-memory store for pending OAuth flows and completed tokens
+# In-memory store for pending OAuth flows (short-lived, OK in memory)
 _pending_oauth: dict[str, dict] = {}
-_oauth_tokens: dict[str, dict] = {}
+# Token store in PostgreSQL (survives restarts)
+from app.services.token_store import token_store
 
 
 INTEGRATION_META = {
@@ -72,6 +73,7 @@ INTEGRATION_META = {
 async def list_integrations(profile_id: UUID):
     """List available MCP integrations via Obot (OAuth handled by Obot shared apps)."""
     tools = await mcp.discover_tools(str(profile_id))
+    _connected_tools = set(await token_store.list_connected())
     return {
         "integrations": [
             {
@@ -79,7 +81,7 @@ async def list_integrations(profile_id: UUID):
                 "name": t["display_name"],
                 "icon": INTEGRATION_META.get(t["name"], {}).get("icon", "🔌"),
                 "category": INTEGRATION_META.get(t["name"], {}).get("category", "Other"),
-                "connected": t["name"] in _oauth_tokens,
+                "connected": t["name"] in _connected_tools,
                 "active": t["active"],
             }
             for t in tools
@@ -323,3 +325,27 @@ async def call_tool(tool_key: str, req: ToolCallRequest):
     """Agent runtime: execute a tool on an Obot MCP server."""
     result = await mcp.call(tool_key, req.tool_name, req.params, req.dry_run)
     return result
+
+
+# --- Skills ---
+
+@router.get("/skills")
+async def list_skills():
+    """List available executable skills."""
+    from app.services.skills import SKILL_REGISTRY
+    return {
+        "skills": [
+            {"name": k, **{kk: vv for kk, vv in v.items() if kk != "fn"}}
+            for k, v in SKILL_REGISTRY.items()
+        ]
+    }
+
+
+@router.post("/skills/{skill_name}/run")
+async def run_skill(skill_name: str):
+    """Execute a skill and return the result."""
+    from app.services.skills import SKILL_REGISTRY
+    skill = SKILL_REGISTRY.get(skill_name)
+    if not skill:
+        return {"error": f"Unknown skill: {skill_name}", "available": list(SKILL_REGISTRY.keys())}
+    return await skill["fn"]()

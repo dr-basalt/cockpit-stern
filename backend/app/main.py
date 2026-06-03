@@ -96,7 +96,8 @@ async def mcp_oauth_callback(request: Request):
         return HTMLResponse("<h2>Erreur</h2><p>Parametres manquants (code ou state)</p>")
 
     # Retrieve pending OAuth data
-    from app.api.session import _pending_oauth, _oauth_tokens
+    from app.api.session import _pending_oauth
+    from app.services.token_store import token_store
     pending = _pending_oauth.pop(state, None)
     if not pending:
         return HTMLResponse("<h2>Erreur</h2><p>Session OAuth expiree ou inconnue. Relance la connexion.</p>")
@@ -123,14 +124,17 @@ async def mcp_oauth_callback(request: Request):
             token_data = r.json()
             tool_key = pending["tool_key"]
 
-            # Store token
-            _oauth_tokens[tool_key] = {
+            # Store token in PostgreSQL (survives restarts)
+            await token_store.save(tool_key, {
                 "access_token": token_data.get("access_token"),
                 "refresh_token": token_data.get("refresh_token"),
                 "token_type": token_data.get("token_type"),
                 "expires_in": token_data.get("expires_in"),
+                "client_id": pending.get("client_id"),
+                "client_secret": pending.get("client_secret"),
+                "token_endpoint": pending.get("token_endpoint"),
                 "tool_key": tool_key,
-            }
+            })
 
             return HTMLResponse(f"""
             <html><body style="font-family:system-ui;max-width:600px;margin:40px auto;text-align:center">

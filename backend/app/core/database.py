@@ -14,6 +14,13 @@ class Base(DeclarativeBase):
 
 async def init_db():
     """Create pgvector extension and tables."""
+    # Import all models so Base.metadata knows about them
+    import app.models.profile  # noqa
+    import app.models.session  # noqa
+    import app.models.okr  # noqa
+    import app.models.design  # noqa
+    import app.models.oauth_token  # noqa
+
     async with engine.begin() as conn:
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)
