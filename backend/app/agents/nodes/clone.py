@@ -3,6 +3,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 
 from langchain_core.messages import AIMessage
+import httpx
 import litellm
 
 from app.agents.state import AgentState
@@ -89,6 +90,75 @@ RÈGLES DE DÉCOMPOSITION (pour type "plan") :
 Réponds UNIQUEMENT en JSON. Pas de texte avant ou après.
 
 {tool_catalog}"""
+
+
+async def _generate_connect_url(tool_key: str) -> str | None:
+    """Generate OAuth connect URL for a tool (dynamic client registration + PKCE)."""
+    import secrets
+    import hashlib
+    import base64
+
+    info = OBOT_MCP_SERVERS.get(tool_key, {})
+    auth_server = info.get("auth_server")
+    if not auth_server:
+        return None
+
+    callback_url = "https://api-stern-os2.ori3com.cloud/mcp/callback"
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(f"{auth_server}/.well-known/oauth-authorization-server")
+            if r.status_code != 200:
+                return None
+            auth_meta = r.json()
+
+            reg_endpoint = auth_meta.get("registration_endpoint")
+            if not reg_endpoint:
+                return None
+
+            r2 = await client.post(reg_endpoint, json={
+                "redirect_uris": [callback_url],
+                "client_name": "Stern OS2",
+                "token_endpoint_auth_method": "client_secret_post",
+            })
+            if r2.status_code not in (200, 201):
+                return None
+            reg = r2.json()
+
+            code_verifier = secrets.token_urlsafe(32)
+            code_challenge = base64.urlsafe_b64encode(
+                hashlib.sha256(code_verifier.encode()).digest()
+            ).rstrip(b"=").decode()
+
+            state_data = f"{tool_key}:{code_verifier}"
+            state = base64.urlsafe_b64encode(state_data.encode()).decode()
+
+            scopes = " ".join(auth_meta.get("scopes_supported", ["profile"]))
+
+            # Store pending OAuth for callback
+            from app.api.session import _pending_oauth
+            _pending_oauth[state] = {
+                "tool_key": tool_key,
+                "client_id": reg["client_id"],
+                "client_secret": reg["client_secret"],
+                "code_verifier": code_verifier,
+                "token_endpoint": auth_meta["token_endpoint"],
+                "redirect_uri": callback_url,
+            }
+
+            return (
+                f"{auth_meta['authorization_endpoint']}"
+                f"?response_type=code"
+                f"&client_id={reg['client_id']}"
+                f"&redirect_uri={callback_url}"
+                f"&state={state}"
+                f"&code_challenge={code_challenge}"
+                f"&code_challenge_method=S256"
+                f"&scope={scopes}"
+            )
+    except Exception as e:
+        logger.warning(f"Failed to generate connect URL for {tool_key}: {e}")
+        return None
 
 
 async def clone_node(state: AgentState) -> dict:
@@ -197,7 +267,15 @@ async def clone_node(state: AgentState) -> dict:
             result = await mcp.call(server, tool_name, params)
 
             if result.get("needs_auth"):
-                content = f"⚠️ **{server}** n'est pas connecté. Connecte-le depuis la sidebar (bouton +) puis réessaie."
+                # Try to generate a direct OAuth link
+                from app.services.mcp_client import OBOT_MCP_SERVERS
+                info = OBOT_MCP_SERVERS.get(server, {})
+                display = info.get("name", server)
+                connect_url = await _generate_connect_url(server)
+                if connect_url:
+                    content = f"⚠️ **{display}** n'est pas encore connecté.\n\n**[Clique ici pour connecter {display}]({connect_url})**\n\nUne fois autorisé, réessaie ta demande."
+                else:
+                    content = f"⚠️ **{display}** n'est pas connecté et le lien OAuth n'a pas pu être généré."
                 return {"messages": [AIMessage(content=content)], "active_agent": "clone"}
 
             if result.get("status") == "ok":
