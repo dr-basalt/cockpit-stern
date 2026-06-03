@@ -133,13 +133,61 @@ class MCPClient:
             logger.warning(f"Obot connect URL failed: {e}")
         return None
 
+    # --- MCP session management ---
+    # Cache: tool_key → mcp-session-id
+    _sessions: dict[str, str] = {}
+
+    async def _get_session(self, tool_key: str, remote_url: str, access_token: str) -> str | None:
+        """Initialize MCP session if needed and return session ID."""
+        if tool_key in self._sessions:
+            return self._sessions[tool_key]
+
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                r = await client.post(
+                    remote_url,
+                    json={
+                        "jsonrpc": "2.0",
+                        "method": "initialize",
+                        "params": {
+                            "protocolVersion": "2025-03-26",
+                            "capabilities": {},
+                            "clientInfo": {"name": "stern-os2", "version": "2.0.0"},
+                        },
+                        "id": 0,
+                    },
+                    headers={
+                        "Content-Type": "application/json",
+                        "Accept": "application/json, text/event-stream",
+                        "Authorization": f"Bearer {access_token}",
+                    },
+                )
+                session_id = r.headers.get("mcp-session-id")
+                if session_id:
+                    self._sessions[tool_key] = session_id
+
+                    # Send initialized notification
+                    await client.post(
+                        remote_url,
+                        json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+                        headers={
+                            "Content-Type": "application/json",
+                            "Accept": "application/json, text/event-stream",
+                            "Authorization": f"Bearer {access_token}",
+                            "Mcp-Session-Id": session_id,
+                        },
+                    )
+                return session_id
+        except Exception as e:
+            logger.warning(f"MCP initialize failed for {tool_key}: {e}")
+            return None
+
     # --- Tool Execution via remote MCP server ---
 
     async def call(self, tool_key: str, tool_name: str, params: dict, dry_run: bool = False) -> dict:
         """Execute a tool on a remote MCP server using the stored OAuth token.
 
-        The call goes directly to the public MCP server (*.obot.ai)
-        with the access_token obtained via the OAuth flow.
+        Flow: initialize session → tools/call with session ID.
         """
         if dry_run:
             return self._dry_run(tool_key, tool_name, params)
@@ -148,7 +196,6 @@ class MCPClient:
         if not info:
             return {"error": f"Unknown tool: {tool_key}", "available_tools": list(OBOT_MCP_SERVERS.keys())}
 
-        # Get token from session store
         from app.api.session import _oauth_tokens
         token_data = _oauth_tokens.get(tool_key)
         if not token_data:
@@ -161,6 +208,13 @@ class MCPClient:
         remote_url = info.get("remote_url")
         if not remote_url:
             return {"error": f"No remote URL for {tool_key}"}
+
+        access_token = token_data["access_token"]
+
+        # Initialize session if needed
+        session_id = await self._get_session(tool_key, remote_url, access_token)
+        if not session_id:
+            return {"error": f"Failed to initialize MCP session for {tool_key}"}
 
         try:
             async with httpx.AsyncClient(timeout=30) as client:
@@ -175,9 +229,32 @@ class MCPClient:
                     headers={
                         "Content-Type": "application/json",
                         "Accept": "application/json, text/event-stream",
-                        "Authorization": f"Bearer {token_data['access_token']}",
+                        "Authorization": f"Bearer {access_token}",
+                        "Mcp-Session-Id": session_id,
                     },
                 )
+                if r.status_code == 400 and "session" in r.text.lower():
+                    # Session expired, retry with fresh session
+                    self._sessions.pop(tool_key, None)
+                    session_id = await self._get_session(tool_key, remote_url, access_token)
+                    if not session_id:
+                        return {"error": "Session re-init failed"}
+                    r = await client.post(
+                        remote_url,
+                        json={
+                            "jsonrpc": "2.0",
+                            "method": "tools/call",
+                            "params": {"name": tool_name, "arguments": params},
+                            "id": 1,
+                        },
+                        headers={
+                            "Content-Type": "application/json",
+                            "Accept": "application/json, text/event-stream",
+                            "Authorization": f"Bearer {access_token}",
+                            "Mcp-Session-Id": session_id,
+                        },
+                    )
+
                 if r.status_code < 400:
                     result = r.json()
                     return {"status": "ok", "tool": tool_name, "server": tool_key, "result": result}
