@@ -174,6 +174,7 @@ class MCPClient:
                     },
                     headers={
                         "Content-Type": "application/json",
+                        "Accept": "application/json, text/event-stream",
                         "Authorization": f"Bearer {token_data['access_token']}",
                     },
                 )
