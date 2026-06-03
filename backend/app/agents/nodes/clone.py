@@ -12,8 +12,9 @@ from app.services.skills import SKILL_REGISTRY
 
 logger = logging.getLogger(__name__)
 
-MODEL = "openrouter/deepseek/deepseek-chat-v3-0324"
-FALLBACK_MODEL = "openrouter/anthropic/claude-haiku-4-5"
+MODEL_FAST = "openrouter/anthropic/claude-haiku-4-5"  # Fast path: chat conversationnel (~1-2s)
+MODEL_TOOL = "openrouter/deepseek/deepseek-chat-v3-0324"  # Tool path: classification + synthesis (meilleur JSON)
+MODEL_FALLBACK = "openrouter/anthropic/claude-haiku-4-5"
 
 # Cached tool catalog — loaded once, refreshed on demand
 _tool_catalog_cache: dict | None = None
@@ -208,11 +209,11 @@ async def clone_node(state: AgentState) -> dict:
             chat_messages.append({"role": role, "content": msg.content})
 
         try:
-            response = await litellm.acompletion(model=MODEL, messages=chat_messages, max_tokens=1024)
+            response = await litellm.acompletion(model=MODEL_FAST, messages=chat_messages, max_tokens=1024)
             content = response.choices[0].message.content
         except Exception:
             try:
-                response = await litellm.acompletion(model=FALLBACK_MODEL, messages=chat_messages, max_tokens=1024)
+                response = await litellm.acompletion(model=MODEL_FALLBACK, messages=chat_messages, max_tokens=1024)
                 content = response.choices[0].message.content
             except Exception:
                 content = "Erreur de connexion. Réessaie."
@@ -236,12 +237,12 @@ async def clone_node(state: AgentState) -> dict:
         messages_for_router.append({"role": role, "content": msg.content})
 
     try:
-        response = await litellm.acompletion(model=MODEL, messages=messages_for_router, max_tokens=2048)
+        response = await litellm.acompletion(model=MODEL_TOOL, messages=messages_for_router, max_tokens=2048)
         raw_content = response.choices[0].message.content
     except Exception as e:
-        logger.warning(f"Clone router failed ({MODEL}), fallback: {e}")
+        logger.warning(f"Clone router failed ({MODEL_TOOL}), fallback: {e}")
         try:
-            response = await litellm.acompletion(model=FALLBACK_MODEL, messages=messages_for_router, max_tokens=2048)
+            response = await litellm.acompletion(model=MODEL_FALLBACK, messages=messages_for_router, max_tokens=2048)
             raw_content = response.choices[0].message.content
         except Exception as e2:
             logger.error(f"Clone fallback also failed: {e2}")
@@ -331,7 +332,7 @@ async def clone_node(state: AgentState) -> dict:
                     {"role": "user", "content": f"Question: {last_message}\n\nDonnées brutes ({server}.{tool_name}):\n{raw_text[:3000]}"},
                 ]
                 try:
-                    r2 = await litellm.acompletion(model=MODEL, messages=synth_messages, max_tokens=1024)
+                    r2 = await litellm.acompletion(model=MODEL_FAST, messages=synth_messages, max_tokens=1024)
                     content = r2.choices[0].message.content
                 except Exception:
                     content = raw_text[:2000]
@@ -382,7 +383,7 @@ async def clone_node(state: AgentState) -> dict:
                 {"role": "user", "content": all_results[:4000]},
             ]
             try:
-                r2 = await litellm.acompletion(model=MODEL, messages=synth_messages, max_tokens=1024)
+                r2 = await litellm.acompletion(model=MODEL_FAST, messages=synth_messages, max_tokens=1024)
                 content = r2.choices[0].message.content
             except Exception:
                 content = all_results[:2000]
@@ -402,11 +403,11 @@ async def clone_node(state: AgentState) -> dict:
         chat_messages.append({"role": role, "content": msg.content})
 
     try:
-        response = await litellm.acompletion(model=MODEL, messages=chat_messages, max_tokens=2048)
+        response = await litellm.acompletion(model=MODEL_FAST, messages=chat_messages, max_tokens=2048)
         content = response.choices[0].message.content
     except Exception:
         try:
-            response = await litellm.acompletion(model=FALLBACK_MODEL, messages=chat_messages, max_tokens=2048)
+            response = await litellm.acompletion(model=MODEL_FALLBACK, messages=chat_messages, max_tokens=2048)
             content = response.choices[0].message.content
         except Exception:
             content = "Erreur de connexion. Réessaie."
