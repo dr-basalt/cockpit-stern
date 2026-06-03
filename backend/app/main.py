@@ -71,3 +71,43 @@ async def oauth_callback_proxy(request: Request):
             return RedirectResponse(url=r.headers.get("location", "/cockpit"))
         from fastapi.responses import Response
         return Response(content=r.content, status_code=r.status_code, headers=dict(r.headers))
+
+
+# Obot proxy — expose internal Obot (http://obot:8080) via api-stern-os2.ori3com.cloud/obot/
+# This fixes localhost:8080 URLs that can't be reached from a browser
+@app.api_route("/obot-proxy/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
+async def obot_proxy(request: Request, path: str):
+    """Proxy all requests to Obot internal container."""
+    import httpx
+    from fastapi.responses import Response
+
+    obot_url = f"http://obot:8080/{path}"
+    params = dict(request.query_params)
+    headers = {k: v for k, v in request.headers.items()
+               if k.lower() not in ("host", "content-length", "transfer-encoding")}
+
+    body = await request.body()
+
+    async with httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
+        r = await client.request(
+            method=request.method,
+            url=obot_url,
+            params=params,
+            headers=headers,
+            content=body if body else None,
+        )
+
+        # Rewrite Location headers: replace localhost:8080 with our external URL
+        resp_headers = dict(r.headers)
+        if "location" in resp_headers:
+            resp_headers["location"] = resp_headers["location"].replace(
+                "http://localhost:8080", "https://api-stern-os2.ori3com.cloud/obot-proxy"
+            ).replace(
+                "http://obot:8080", "https://api-stern-os2.ori3com.cloud/obot-proxy"
+            )
+
+        return Response(
+            content=r.content,
+            status_code=r.status_code,
+            headers=resp_headers,
+        )

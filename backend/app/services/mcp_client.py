@@ -127,7 +127,7 @@ class MCPClient:
                                 # Convert internal URL to external
                                 return connect.replace(
                                     "http://localhost:8080",
-                                    "https://obot-stern-os2.ori3com.cloud"
+                                    "https://api-stern-os2.ori3com.cloud/obot-proxy"
                                 )
         except Exception as e:
             logger.warning(f"Obot connect URL failed: {e}")
