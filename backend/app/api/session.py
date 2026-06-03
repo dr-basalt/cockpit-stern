@@ -47,6 +47,10 @@ from app.services.mcp_client import MCPClient, OBOT_MCP_SERVERS
 OBOT_URL = getattr(settings, "OBOT_URL", "http://obot:8080")
 mcp = MCPClient()
 
+# In-memory store for pending OAuth flows and completed tokens
+_pending_oauth: dict[str, dict] = {}
+_oauth_tokens: dict[str, dict] = {}
+
 
 INTEGRATION_META = {
     "google-calendar": {"icon": "📅", "category": "Google"},
@@ -75,7 +79,7 @@ async def list_integrations(profile_id: UUID):
                 "name": t["display_name"],
                 "icon": INTEGRATION_META.get(t["name"], {}).get("icon", "🔌"),
                 "category": INTEGRATION_META.get(t["name"], {}).get("category", "Other"),
-                "connected": t["configured"],
+                "connected": t["name"] in _oauth_tokens,
                 "active": t["active"],
             }
             for t in tools
@@ -203,12 +207,6 @@ async def get_connect_link(tool_key: str):
     except Exception as e:
         logger.error(f"OAuth connect failed for {tool_key}: {e}")
         return {"error": str(e)}
-
-
-# In-memory store for pending OAuth flows (use Redis in production)
-_pending_oauth: dict[str, dict] = {}
-# Store tokens after successful OAuth
-_oauth_tokens: dict[str, dict] = {}
 
 
 class ToolCallRequest(BaseModel):
