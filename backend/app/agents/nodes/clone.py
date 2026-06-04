@@ -16,8 +16,10 @@ MODEL_FAST = "openrouter/anthropic/claude-haiku-4-5"  # Fast path: chat conversa
 MODEL_TOOL = "openrouter/deepseek/deepseek-chat-v3-0324"  # Tool path: classification + synthesis (meilleur JSON)
 MODEL_FALLBACK = "openrouter/anthropic/claude-haiku-4-5"
 
-# Cached tool catalog — loaded once, refreshed on demand
-_tool_catalog_cache: dict | None = None
+# Cached tool catalog — loaded once per process, with TTL
+_tool_catalog_cache: str | None = None
+_tool_catalog_ts: float = 0
+CATALOG_TTL = 300  # refresh every 5 min
 
 
 async def _get_tool_catalog() -> str:
@@ -26,8 +28,9 @@ async def _get_tool_catalog() -> str:
     This is the GENERIC approach: the LLM sees ALL tools and decides.
     No hardcoded intents. POEO × POAIG.
     """
-    global _tool_catalog_cache
-    if _tool_catalog_cache:
+    import time
+    global _tool_catalog_cache, _tool_catalog_ts
+    if _tool_catalog_cache and (time.time() - _tool_catalog_ts) < CATALOG_TTL:
         return _tool_catalog_cache
 
     mcp = MCPClient()
@@ -39,10 +42,18 @@ async def _get_tool_catalog() -> str:
         tools = await mcp.list_server_tools(info["catalog_id"])
         if not tools:
             continue
-        lines.append(f"## {info['name']} (server: {key})")
+        lines.append(f"## {info['name']} (server: \"{key}\")")
         for t in tools:
-            params_str = ", ".join(f"{k}: {v}" for k, v in t.get("params", {}).items())
-            lines.append(f"  - {t['name']}({params_str}) — {t.get('description', '')[:80]}")
+            params = t.get("params", {})
+            if params:
+                params_entries = []
+                for k, v in params.items():
+                    params_entries.append(f'"{k}": "<{v}>"')
+                params_json = "{" + ", ".join(params_entries) + "}"
+            else:
+                params_json = "{}"
+            lines.append(f"  - tool: \"{t['name']}\", params: {params_json}")
+            lines.append(f"    {t.get('description', '')[:100]}")
         lines.append("")
 
     lines.append("## Skills composites")
@@ -51,6 +62,7 @@ async def _get_tool_catalog() -> str:
 
     catalog = "\n".join(lines)
     _tool_catalog_cache = catalog
+    _tool_catalog_ts = time.time()
     return catalog
 
 
