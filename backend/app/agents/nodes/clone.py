@@ -12,8 +12,8 @@ from app.services.skills import SKILL_REGISTRY
 
 logger = logging.getLogger(__name__)
 
-MODEL_FAST = "openrouter/anthropic/claude-haiku-4-5"  # Fast path: chat conversationnel (~1-2s)
-MODEL_TOOL = "openrouter/deepseek/deepseek-chat-v3-0324"  # Tool path: classification + synthesis (meilleur JSON)
+MODEL_FAST = "openrouter/anthropic/claude-haiku-4-5"  # Fast path: chat conversationnel (~2s)
+MODEL_TOOL = "openrouter/anthropic/claude-haiku-4-5"  # Tool path: classification (suit mieux les instructions de params)
 MODEL_FALLBACK = "openrouter/anthropic/claude-haiku-4-5"
 
 # Cached tool catalog — loaded once per process, with TTL
