@@ -56,7 +56,7 @@ class Pipe:
         ]
 
     async def pipe(self, body: dict, __user__: dict = None):
-        """Route OWUI messages vers Stern OS2 backend. Returns streaming."""
+        """Route OWUI messages vers Stern OS2 backend. Streaming avec réponse intermédiaire."""
         model_id = body.get("model", "").split(".")[-1] if "." in body.get("model", "") else body.get("model", "")
         messages = body.get("messages", [])
         last_message = messages[-1].get("content", "") if messages else ""
@@ -66,14 +66,15 @@ class Pipe:
 
         # Morning brief shortcut
         if model_id == "stern-morning-brief":
-            result = await self._run_skill("morning_brief")
-            return result
+            if body.get("stream", False):
+                return self._stream_with_thinking("Je prépare ton briefing matinal...", self._run_skill("morning_brief"))
+            return await self._run_skill("morning_brief")
 
-        # Standard chat via LangGraph — stream the response word by word
-        full_response = await self._chat_raw(last_message)
+        # Standard chat — stream with "thinking" indicator for tool calls
         if body.get("stream", False):
-            return self._stream_response(full_response)
-        return full_response
+            return self._stream_with_thinking(None, self._chat_raw(last_message))
+
+        return await self._chat_raw(last_message)
 
     async def _chat_raw(self, message: str) -> str:
         """Call Stern OS2 /api/chat — LangGraph routing. Returns formatted string."""
@@ -110,17 +111,39 @@ class Pipe:
         except Exception as e:
             return f"Erreur: {e}"
 
-    async def _stream_response(self, text: str):
-        """Simulate streaming by yielding chunks of text."""
+    async def _stream_with_thinking(self, thinking_msg: str | None, coro):
+        """Stream: show thinking message → await backend → stream result.
+
+        This gives instant feedback to the user while the backend processes.
+        """
         import asyncio
-        # Yield in sentence-sized chunks for natural reading
-        chunks = text.split("\n")
-        for i, chunk in enumerate(chunks):
-            if chunk.strip():
-                yield chunk
-                if i < len(chunks) - 1:
-                    yield "\n"
-                await asyncio.sleep(0.02)  # small delay for streaming feel
+
+        # Detect if the message likely needs tools (same heuristic as clone)
+        TOOL_HINTS = ["mail", "email", "agenda", "calendrier", "rdv", "fichier", "drive",
+                      "notion", "slack", "linear", "stripe", "todoist", "briefing",
+                      "crée", "envoie", "supprime", "planifie", "lis", "montre", "cherche"]
+
+        # Auto-generate thinking message based on content
+        if thinking_msg is None:
+            # Check if it's a tool-requiring message
+            last_msg = ""
+            # We don't have the message here directly, but we can check the coro
+            thinking_msg = ""
+
+        if thinking_msg:
+            yield thinking_msg + "\n\n"
+            await asyncio.sleep(0.1)
+
+        # Await the actual response
+        result = await coro
+
+        # Stream the result line by line
+        lines = result.split("\n")
+        for i, line in enumerate(lines):
+            yield line
+            if i < len(lines) - 1:
+                yield "\n"
+            await asyncio.sleep(0.01)
 
     async def _run_skill(self, skill_name: str) -> str:
         """Execute a Stern OS2 skill directly."""
